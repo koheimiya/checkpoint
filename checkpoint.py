@@ -23,6 +23,9 @@ CHECKPOINT_PATH = Path(os.getenv('CHECKPOINT_DIR', './')) / '.checkpoints'
 CHECKPOINT_PATH.mkdir(parents=True, exist_ok=True)
 
 
+DISABLE_CHECKPOINT_REUSE = bool(os.getenv('DISABLE_CHECKPOINT', 0))
+
+
 T = TypeVar('T')
 P = ParamSpec('P')
 
@@ -32,6 +35,9 @@ Json = NewType('Json', str)
 
 @dataclass
 class _DB(Generic[T]):
+    """ Key-value store with JSON keys and python object values.
+    Automatically log timestamp.
+    """
     path: str
     compress: bool
     result_dict: SqliteDict
@@ -72,50 +78,61 @@ class _DB(Generic[T]):
         return (self.path == other.path) and (self.compress == other.compress)
 
     def save(self, key: Json, obj: T) -> datetime:
-        with self.result_dict as res_dict:
-            res_dict[key] = obj
-            res_dict.commit()
+        with self.result_dict as d:
+            d[key] = obj
+            d.commit()
 
         timestamp = datetime.now()
-        with self.timestamp_dict as ts_dict:
-            ts_dict[key] = timestamp.timestamp()
-            ts_dict.commit()
+        with self.timestamp_dict as d:
+            d[key] = timestamp.timestamp()
+            d.commit()
         return timestamp
 
     def add_dependency(self, key: Json, dep: tuple[_FunctionWithDB, Json]) -> None:
-        with self.dependency_dict as deps_dict:
+        with self.dependency_dict as d:
             try:
-                deps = deps_dict[key] + [dep]
+                deps = d[key] + [dep]
             except KeyError:
                 deps = [dep]
-            deps_dict[key] = deps
-            deps_dict.commit()
+            d[key] = deps
+            d.commit()
 
     def reset_dependencies(self, key: Json) -> None:
-        with self.dependency_dict as deps_dict:
-            deps_dict[key] = []
-            deps_dict.commit()
+        with self.dependency_dict as d:
+            d[key] = []
+            d.commit()
 
     def load(self, key: Json) -> T:
-        with self.result_dict as db:
-            return db[key]
+        with self.result_dict as d:
+            return d[key]
 
     def load_timestamp(self, key: Json) -> datetime:
-        with self.timestamp_dict as db:
-            return datetime.fromtimestamp(db[key])
+        with self.timestamp_dict as d:
+            return datetime.fromtimestamp(d[key])
 
     def load_deps(self, key: Json) -> list[tuple[_FunctionWithDB, Json]]:
-        with self.dependency_dict as db:
-            return db[key]
+        with self.dependency_dict as d:
+            return d[key]
 
     def list_keys(self) -> list[Json]:
-        with self.result_dict as db:
-            return list(db.keys())
+        with self.result_dict as d:
+            return list(d.keys())
+
+    def _get_dicts(self) -> list[SqliteDict]:
+        return [self.result_dict, self.timestamp_dict, self.dependency_dict]
 
     def clear(self) -> None:
-        self.result_dict.clear()
-        self.timestamp_dict.clear()
-        self.dependency_dict.clear()
+        for d in self._get_dicts():
+            try:
+                d.clear()
+            except:
+                pass
+
+    def delete(self, key: Json) -> None:
+        for dct in self._get_dicts():
+            with dct as d:
+                del d[key]
+                d.commit()
 
 
 def _encode(obj: Any) -> sqlite3.Binary:
@@ -169,7 +186,7 @@ class _FunctionWithDB(Generic[P, T]):
         arguments = params.arguments
         return _serialize(arguments)
 
-    def _run(self, arg_key: Json) -> _Result[T]:
+    def _run_and_save(self, arg_key: Json) -> datetime:
         """ Actually call the function with serialized arguments """
         # Push current task to stack and reset dependencies
         self.active_tasks.append((self, arg_key))
@@ -185,7 +202,8 @@ class _FunctionWithDB(Generic[P, T]):
         self.active_tasks.pop()
 
         out = _Result(value=value, duration=duration)
-        return out
+        ts = self.db.save(key=arg_key, obj=out)
+        return ts
 
     def _update(self, arg_key: Json) -> datetime:
         """ Update the cache and the dependencies recursively. """
@@ -203,11 +221,11 @@ class _FunctionWithDB(Generic[P, T]):
                         f'arguments={arg_key}, datetime={ts0}, '
                         f'newer_upstream_tasks={newer_upstream_tasks}'
                         )
-                raise KeyError()
+                raise KeyError('Old cache detected')
+            if DISABLE_CHECKPOINT_REUSE:
+                raise KeyError('Reuse desabled')
         except KeyError as e:
-            # import pdb; pdb.set_trace()
-            result = self._run(arg_key)
-            ts0 = self.db.save(key=arg_key, obj=result)
+            ts0 = self._run_and_save(arg_key)
             miss += 1
         else:
             hit += 1
@@ -234,6 +252,16 @@ class _FunctionWithDB(Generic[P, T]):
 
     def list_cached_arguments(self) -> list[dict]:
         return list(map(_deserialize, self.db.list_keys()))
+
+    def clear(self) -> None:
+        try:
+            self.db.clear()
+        except:
+            pass
+        self.cache_stats = {}
+
+    def delete(self, *args: P.args, **kwargs: P.kwargs) -> None:
+        self.db.delete(self._serialize_arguments(*args, **kwargs))
 
 
 def _serialize(arguments: dict) -> Json:
