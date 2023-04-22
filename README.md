@@ -6,7 +6,7 @@
 
 ### Installation
 ```
-pip install .
+pip install checkpoint-tool
 ```
 
 
