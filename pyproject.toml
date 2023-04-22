@@ -4,6 +4,8 @@ version = "0.1.0"
 description = "`functools.cache` becomes persistent and more."
 authors = ["Kohei Miyaguchi <koheimiyaguchi@gmail.com>"]
 license = "MIT License"
+homepage = "https://github.com/koheimiya/checkpoint"
+repository = "https://github.com/koheimiya/checkpoint"
 readme = "README.md"
 packages = [{include = "checkpoint.py"}]
 
