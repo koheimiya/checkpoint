@@ -66,16 +66,23 @@ def task_a():
     return None
 
 
-@checkpoint(name='the_answer', compress=True)
+@checkpoint(compress=True)
 def task_b():
+    return None
+
+
+@checkpoint(name='the_answer', compress=True)
+def task_c():
     task_a()
+    task_b()
     return 42
 
 
 def test_multiple_tasks():
     task_a.clear()
     task_b.clear()
+    task_c.clear()
     assert not task_a.cache_stats
-    assert task_b() == 42
-    assert task_b() == 42
+    assert task_c() == 42
+    assert task_c() == 42
     assert task_a.cache_stats
