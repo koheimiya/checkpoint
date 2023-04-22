@@ -1,4 +1,4 @@
-# Checkpoint
+# Checkpoint-tool
 `functools.cache` becomes persistent, and more:
 - Support JSON-serializable arguments
 - Automatic dependency management (i.e., discard cache if upstream cache is altered/deleted)

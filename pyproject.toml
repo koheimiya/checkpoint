@@ -1,14 +1,21 @@
-[project]
-name = "checkpoint"
-version = "0.0.1"
-authors = [
-  {name = "Kohei Miyaguchi", email = "koheimiyaguchi@gmail.com"},
-]
-license = {text = "MIT License"}
-requires-python = ">=3.9"
-dependencies = [
-    "sqlitedict~=2.1.0",
-    "typing_extensions",
-    "dill",
-    "pytest",
-]
+[tool.poetry]
+name = "checkpoint-tool"
+version = "0.1.0"
+description = "`functools.cache` becomes persistent and more."
+authors = ["Kohei Miyaguchi <koheimiyaguchi@gmail.com>"]
+license = "MIT License"
+readme = "README.md"
+packages = [{include = "checkpoint.py"}]
+
+[tool.poetry.dependencies]
+python = "^3.9"
+dill = "^0.3.6"
+sqlitedict = "^2.1.0"
+typing-extensions = "^4.5.0"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^7.3.1"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
