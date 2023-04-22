@@ -2,9 +2,9 @@ from checkpoint import CHECKPOINT_PATH, checkpoint, _FunctionWithDB
 
 
 @checkpoint()
-def choice(n: int, k: int) -> int:
+def choose(n: int, k: int) -> int:
     if 0 < k < n:
-        return choice(n - 1, k - 1) + choice(n - 1, k)
+        return choose(n - 1, k - 1) + choose(n - 1, k)
     elif k == 0 or k == n:
         return 1
     else:
@@ -12,26 +12,26 @@ def choice(n: int, k: int) -> int:
 
 
 def test_checkpoint():
-    choice.clear()
-    ans = choice(6, 3)
+    choose.clear()
+    ans = choose(6, 3)
     assert ans == 20
-    assert _num_function_calls(choice) == 2 + 4 + 6 + 4 + 2 + 1
+    assert _num_function_calls(choose) == 2 + 4 + 6 + 4 + 2 + 1
 
-    ans = choice(6, 3)
+    ans = choose(6, 3)
     assert ans == 20
-    assert _num_function_calls(choice) == 2 + 4 + 6 + 4 + 2 + 1 + 1
+    assert _num_function_calls(choose) == 2 + 4 + 6 + 4 + 2 + 1 + 1
 
 
 def test_timestamp_management():
-    choice.clear()
-    ans = choice(6, 3)
-    n = _num_function_calls(choice)
-    _show_stats(choice)
+    choose.clear()
+    ans = choose(6, 3)
+    n = _num_function_calls(choose)
+    _show_stats(choose)
 
-    choice.delete(3, 3)
-    ans2 = choice(6, 3)
-    n2 = _num_function_calls(choice)
-    _show_stats(choice)
+    choose.delete(3, 3)
+    ans2 = choose(6, 3)
+    n2 = _num_function_calls(choose)
+    _show_stats(choose)
 
     assert ans == ans2
     assert n2 == n + 7

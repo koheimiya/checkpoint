@@ -25,7 +25,7 @@ def choose(n: int, k: int) -> int:
     else:
         raise ValueError(f'n={n}, k={k}')
         
-ans = choose(6, 3)  # cache will be stored at $CHECKPOINT_PATH/.checkpoint/choice.sqlite
+ans = choose(6, 3)  # cache will be stored at $CHECKPOINT_DIR/.checkpoint/choice.sqlite
 ```
 
 It is possible to selectively discard cache: 
@@ -38,5 +38,26 @@ choose.clear()      # delete all cache
 
 More complex inputs can be used as long as it is JSON serializable:
 ```python
+@checkpoint()
+def task1(**param1):
+    ...
 
+@checkpoint()
+def task2(**param2):
+    ...
+
+@checkpoint()
+def task3(params):
+    result1 = task1(**params['param1'])
+    result2 = task2(**params['param2'])
+    ...
+
+result = task3({'param1': { ... }, 'param2': { ... }})
+```
+
+Large outputs can be stored with compression:
+```python
+@checkpoint(compress=True)
+def large_result_computation(*args, **kwargs):
+    ...
 ```
