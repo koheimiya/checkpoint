@@ -1,7 +1,7 @@
 from __future__ import annotations
-from functools import wraps
 import inspect
-from dataclasses import dataclass
+from functools import wraps
+from dataclasses import dataclass, field
 from typing import Callable, ClassVar, Generic, NewType, TypeVar, ParamSpec, Any
 import logging
 import time
@@ -11,7 +11,7 @@ import os
 from pathlib import Path
 from typing_extensions import Self
 import zlib
-import pickle
+import dill
 import sqlite3
 from sqlitedict import SqliteDict
 
@@ -19,7 +19,7 @@ from sqlitedict import SqliteDict
 LOGGER = logging.getLogger(__name__)
 
 
-CHECKPOINT_PATH = Path(os.getenv('CHECKPOINT_DIR', './')) / 'checkpoints'
+CHECKPOINT_PATH = Path(os.getenv('CHECKPOINT_DIR', './')) / '.checkpoints'
 CHECKPOINT_PATH.mkdir(parents=True, exist_ok=True)
 
 
@@ -32,6 +32,8 @@ Json = NewType('Json', str)
 
 @dataclass
 class _DB(Generic[T]):
+    path: str
+    compress: bool
     result_dict: SqliteDict
     timestamp_dict: SqliteDict
     dependency_dict: SqliteDict
@@ -39,15 +41,35 @@ class _DB(Generic[T]):
     @classmethod
     def make(cls, name: str, compress: bool) -> Self:
         path = str(CHECKPOINT_PATH / name) + ".sqlite"
-        custom_encoder_decoder = {}
-        if compress:
-            custom_encoder_decoder['encode'] = _encode_and_compress
-            custom_encoder_decoder['decode'] = _decompress_and_decode
+        return cls._make(path, compress)
+
+    @classmethod
+    def _make(cls, path: str, compress: bool) -> Self:
+        converter = {'encode': _encode, 'decode': _decode}
+        converter_with_compression = {'encode': _encode_and_compress, 'decode': _decompress_and_decode}
+        result_converter = converter_with_compression if compress else converter
         return _DB(
-                result_dict=SqliteDict(path, tablename='result', **custom_encoder_decoder),
-                timestamp_dict=SqliteDict(path, tablename='timestamp'),
-                dependency_dict=SqliteDict(path, tablename='dependency'),
+                path=path,
+                compress=compress,
+                result_dict=SqliteDict(path, tablename='result', **result_converter),
+                timestamp_dict=SqliteDict(path, tablename='timestamp', **converter),
+                dependency_dict=SqliteDict(path, tablename='dependency', **converter),
                 )
+
+    def __getstate__(self) -> dict:
+        return {'path': self.path, 'compress': self.compress}
+
+    def __setstate__(self, state: dict) -> None:
+        self.__dict__.update(state)
+        db = self._make(self.path, self.compress)
+        self.result_dict = db.result_dict
+        self.timestamp_dict = db.timestamp_dict
+        self.dependency_dict = db.dependency_dict
+
+    def __eq__(self, other: Any) -> bool:
+        if not isinstance(other, _DB):
+            return False
+        return (self.path == other.path) and (self.compress == other.compress)
 
     def save(self, key: Json, obj: T) -> datetime:
         with self.result_dict as res_dict:
@@ -90,13 +112,26 @@ class _DB(Generic[T]):
         with self.result_dict as db:
             return list(db.keys())
 
+    def clear(self) -> None:
+        self.result_dict.clear()
+        self.timestamp_dict.clear()
+        self.dependency_dict.clear()
+
+
+def _encode(obj: Any) -> sqlite3.Binary:
+    return sqlite3.Binary(dill.dumps(obj, dill.HIGHEST_PROTOCOL))
+
+
+def _decode(obj: Any) -> Any:
+    return dill.loads(bytes(obj))
+
 
 def _encode_and_compress(obj: Any) -> sqlite3.Binary:
-    return sqlite3.Binary(zlib.compress(pickle.dumps(obj, pickle.HIGHEST_PROTOCOL)))
+    return sqlite3.Binary(zlib.compress(dill.dumps(obj, dill.HIGHEST_PROTOCOL)))
 
 
 def _decompress_and_decode(obj: Any) -> Any:
-    return pickle.loads(zlib.decompress(bytes(obj)))
+    return dill.loads(zlib.decompress(bytes(obj)))
 
 
 @dataclass
@@ -110,7 +145,7 @@ class _FunctionWithDB(Generic[P, T]):
     name: str
     func: Callable[P, T]
     db: _DB[_Result[T]]
-    cache_stats: dict[Json, tuple[int, int]] = {}  # hit and miss
+    cache_stats: dict[Json, tuple[int, int]] = field(default_factory=dict)  # hit and miss
 
     name_register: ClassVar[set[str]] = set()
     active_tasks: ClassVar[list[tuple[_FunctionWithDB, Json]]] = []
@@ -146,7 +181,7 @@ class _FunctionWithDB(Generic[P, T]):
         duration = time.time() - start_time
 
         # Pop stack
-        assert self.active_tasks[-1] is self, 'task stack is altered'
+        assert self.active_tasks[-1] == (self, arg_key), 'task stack is altered'
         self.active_tasks.pop()
 
         out = _Result(value=value, duration=duration)
@@ -161,15 +196,16 @@ class _FunctionWithDB(Generic[P, T]):
             ts0 = self.db.load_timestamp(arg_key)
             upstream_tasks = self.db.load_deps(arg_key)
             upstream_timestamps = [fn._update(key) for fn, key in upstream_tasks]
-            newer_upstream_tasks = [(fn, key, ts) for (fn, key), ts in zip(upstream_tasks, upstream_timestamps)]
+            newer_upstream_tasks = [(fn, key, ts) for (fn, key), ts in zip(upstream_tasks, upstream_timestamps) if ts > ts0]
             if newer_upstream_tasks:
-                LOGGER.warn(
+                LOGGER.warning(
                         f'Old cache detected in {self.name}: '
                         f'arguments={arg_key}, datetime={ts0}, '
                         f'newer_upstream_tasks={newer_upstream_tasks}'
                         )
                 raise KeyError()
-        except KeyError:
+        except KeyError as e:
+            # import pdb; pdb.set_trace()
             result = self._run(arg_key)
             ts0 = self.db.save(key=arg_key, obj=result)
             miss += 1
@@ -208,11 +244,14 @@ def _deserialize(s: str) -> Any:
     return json.loads(s)
 
 
-def checkpoint(name: str | None = None, compress: bool = False) -> Callable[[Callable[P, T]], _FunctionWithDB[P, T]]:
+@dataclass
+class checkpoint:
     """ Decorator for persistent cache.
     The arguments of the function must be json-compatible.
-    Values are stored in `$CHECKPOINT_PATH/checkpoints/{name}.sqlite`. `$CHECKPOINT_PATH` defaults to the current working directory.
+    Values are stored in `$CHECKPOINT_PATH/.checkpoints/{name}.sqlite`. `$CHECKPOINT_PATH` defaults to the current working directory.
     """
-    def wrapper(func: Callable[P, T]) -> _FunctionWithDB[P, T]:
-        return _FunctionWithDB.make(name=name, func=func, compress=compress)
-    return wrapper
+    name: str | None = None
+    compress: bool = False
+
+    def __call__(self, func: Callable[P, T]) -> _FunctionWithDB[P, T]:
+        return wraps(func)(_FunctionWithDB.make(name=self.name, func=func, compress=self.compress))
