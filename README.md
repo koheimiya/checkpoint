@@ -62,3 +62,7 @@ Large outputs can be stored with compression:
 def large_result_computation(*args, **kwargs):
     ...
 ```
+
+# TODO
+- [x] Introduce more stable key-value store backend, e.g., DiskCache
+- [ ] Introduce dedicated dependency management library, e.g., Celery
