@@ -1,4 +1,5 @@
-from checkpoint import CHECKPOINT_PATH, checkpoint, _FunctionWithDB
+# from checkpoint.checkpoint_legacy import checkpoint, _FunctionWithDB
+from checkpoint import checkpoint, FunctionWithDB
 
 
 @checkpoint()
@@ -37,13 +38,13 @@ def test_timestamp_management():
     assert n2 == n + 7
 
 
-def _num_function_calls(fn: _FunctionWithDB):
+def _num_function_calls(fn: FunctionWithDB):
     return sum(hit + miss for hit, miss in fn.cache_stats.values())
 
 
-def _show_stats(fn: _FunctionWithDB):
+def _show_stats(fn: FunctionWithDB):
     import json
-    stats = [(json.loads(k), k) for k, v in fn.cache_stats.items()]
+    stats = [(json.loads(k), k) for k, _ in fn.cache_stats.items()]
     stats = {}
     for key, value in fn.cache_stats.items():
         args = json.loads(key)
@@ -66,12 +67,12 @@ def task_a():
     return None
 
 
-@checkpoint(compress=True)
+@checkpoint(compress_level=6)
 def task_b():
     return None
 
 
-@checkpoint(name='the_answer', compress=True)
+@checkpoint(name='the_answer', compress_level=6)
 def task_c():
     task_a()
     task_b()
