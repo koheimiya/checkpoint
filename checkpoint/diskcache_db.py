@@ -100,7 +100,7 @@ class DillDisk(dc.Disk):
         super().__init__(directory, **kwargs)
 
     def put(self, key):
-        data = dill.dumps(key)
+        data = dill.dumps(key, byref=True)
         if self.compress_level is not None:
             data = zlib.compress(data, self.compress_level)
         return super().put(data)
@@ -113,7 +113,7 @@ class DillDisk(dc.Disk):
 
     def store(self, value, read, key=dc.UNKNOWN):
         if not read:
-            value = dill.dumps(value)
+            value = dill.dumps(value, byref=True)
             if self.compress_level is not None:
                 value = zlib.compress(value, self.compress_level)
         return super().store(value, read, key=key)
