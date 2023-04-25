@@ -15,6 +15,7 @@ dill = "^0.3.6"
 sqlitedict = "^2.1.0"
 typing-extensions = "^4.5.0"
 diskcache = "^5.6.1"
+celery = "^5.2.7"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^7.3.1"
