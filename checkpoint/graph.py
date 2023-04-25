@@ -26,23 +26,22 @@ class Task(Generic[T]):
     db: DBProtocol
     key: Json
 
-    def load(self) -> T:
-        return self.db.load(self.key)
-
-    def save(self) -> None:
+    def set_result(self) -> None:
         out = self.runner()
         self.db.save(self.key, out)
+
+    def get_result(self) -> T:
+        return self.db.load(self.key)
 
 
 TaskFn = Callable[P, Task[R]]
 
 
 def task(
-        db_factory: Callable[[RunnerFn[..., R]], DBProtocol[R, Any]] | None = None,
+        compress_level: int | None = None
         ) -> Callable[[RunnerFn[P, R]], TaskFn[P, R]]:
     """ Insert cache to task runner factory. """
-    if db_factory is None:
-        db_factory = lambda fn: DiskCacheDB.make(_serialize_function(fn), compress_level=None)
+    db_factory = lambda fn: DiskCacheDB.make(_serialize_function(fn), compress_level=compress_level)
 
     def wrapper(fn: RunnerFn[P, R]) -> TaskFn[P, R]:
         db = db_factory(fn)
@@ -73,7 +72,7 @@ class Peeled(Generic[T, P, R]):
     unpeel: Callable[Concatenate[T, P], R]
 
     def __call__(self, *args: P.args, **kwargs: P.kwargs) -> R:
-        x = self.task0.load()
+        x = self.task0.get_result()
         return self.unpeel(x, *args, **kwargs)
 
 
@@ -118,12 +117,11 @@ class Graph:
 def run(task: Task[T]) -> T:
     graph = Graph.build(task)
     graph.dispatch()
-    return task.load()
+    return task.get_result()
 
 
 @task()
 def example_fetch_data(s: str) -> Runner[int]:
-
     def runner():
         return len(s)
     return runner
@@ -131,7 +129,6 @@ def example_fetch_data(s: str) -> Runner[int]:
 
 @task()
 def example_add(s: str, b: int) -> Runner[int]:
-
     @requires(example_fetch_data(s))
     def runner(data: int) -> int:
         return data + b
