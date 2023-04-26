@@ -10,7 +10,7 @@ import zlib
 import diskcache as dc
 
 from concurrent.futures import ProcessPoolExecutor, Future, ThreadPoolExecutor, wait, FIRST_COMPLETED
-from functools import wraps
+from functools import singledispatch, wraps
 import inspect
 import json
 
@@ -110,15 +110,18 @@ class Task(Generic[T]):
         db = self.task_factory.db
         return db.load(self.key)
 
-    def __eq__(self, other) -> bool:
-        if not isinstance(other, Task):
-            return False
-        return self.to_tuple() == other.to_tuple()
+    # def __eq__(self, other) -> bool:
+    #     if not isinstance(other, Task):
+    #         return False
+    #     return self.to_tuple() == other.to_tuple()
 
-    def run(self, max_workers: int | None = None) -> T:
+    def run(self, *, max_workers: int | None = None) -> T:
+        return self.run_with_info(max_workers=max_workers)[0]
+
+    def run_with_info(self, *, max_workers: int | None = None) -> tuple[T, dict[str, Any]]:
         graph = Graph.build(self)
-        run_task_graph(graph, max_workers=max_workers)
-        return self.get_result()
+        info = run_task_graph(graph, max_workers=max_workers)
+        return self.get_result(), info
 
     def clear(self) -> None:
         db = self.task_factory.db
@@ -152,10 +155,10 @@ class TaskFactory(Generic[P, R]):
             timestamp = None
         return Task(runner, task_factory=self, key=key, timestamp=timestamp)
 
-    def __eq__(self, other) -> bool:
-        if not isinstance(other, TaskFactory):
-            return False
-        return (self.get_db_path() == other.get_db_path())
+    # def __eq__(self, other) -> bool:
+    #     if not isinstance(other, TaskFactory):
+    #         return False
+    #     return (self.get_db_path() == other.get_db_path())
 
 
 @overload
@@ -201,6 +204,24 @@ def _serialize_arguments(fn: Callable[P, Any], *args: P.args, **kwargs: P.kwargs
 
 Connector = Callable[[Callable[Concatenate[T, P], R]], Callable[P, R]]  # Takes (T, *P) -> R and return P -> R
 
+@overload
+def requires(task: Task[T]) -> Connector[T, P, R]: ...
+@overload
+def requires(task: list[Task[T]]) -> Connector[list[T], P, R]: ...
+@overload
+def requires(task: dict[K, Task[T]]) -> Connector[dict[K, T], P, R]: ...
+def requires(task: AnyTask | list[AnyTask] | dict[Any, AnyTask]) -> Any:
+    """ Register a task dependency """
+    if isinstance(task, Task):
+        return requires_single(task)
+    elif isinstance(task, list):
+        return requires_list(task)
+    elif isinstance(task, dict):
+        return requires_dict(task)
+    else:
+        raise TypeError(task)
+
+
 
 @dataclass(eq=True, frozen=True)
 class Connected(Generic[T, P, R]):
@@ -216,7 +237,7 @@ class Connected(Generic[T, P, R]):
         return [self.task]
 
 
-def requires(task: Task[T]) -> Connector[T, P, R]:
+def requires_single(task: Task[T]) -> Connector[T, P, R]:
     """ Register a task dependency """
     def decorator(fn: Callable[Concatenate[T, P], R]) -> Callable[P, R]:
         return Connected(task, fn)
@@ -318,7 +339,7 @@ def _run_task(task_data: bytes) -> tuple[str, Json]:
     return task.to_tuple()
 
 
-def run_task_graph(graph: Graph, max_workers: int | None = None, executor_type: Type[ProcessPoolExecutor] | Type[ThreadPoolExecutor] = ProcessPoolExecutor) -> None:
+def run_task_graph(graph: Graph, max_workers: int | None = None, executor_type: Type[ProcessPoolExecutor] | Type[ThreadPoolExecutor] = ProcessPoolExecutor) -> dict[str, Any]:
     """ Consume task graph concurrently.
     """
     active_subgraphs = walk_subgraph_to_update(graph)
@@ -329,6 +350,7 @@ def run_task_graph(graph: Graph, max_workers: int | None = None, executor_type: 
     descendants: dict[Key, set[Key]] = {}
     precedents: dict[Key, set[Key]] = {}
     leaves: set[Key] = set()
+    nodes_by_path: dict[str, set[Json]] = {}
     for g in active_subgraphs:
         root_key = g.root.to_tuple()
         nodes[root_key] = g.root
@@ -345,6 +367,14 @@ def run_task_graph(graph: Graph, max_workers: int | None = None, executor_type: 
                 assert precedents[root_key] == set(ug.root.to_tuple() for ug in g.upstream_graphs), 'Same tasks have to have the same upstream'
         else:
             leaves.add(root_key)
+
+        path, arg_key = root_key
+        if path not in nodes_by_path:
+            nodes_by_path[path] = set()
+        nodes_by_path[path].add(arg_key)
+
+    stats = {k: len(args) for k, args in nodes_by_path.items()}
+    LOGGER.info(f'Following tasks will be called: {stats}')
 
     # Read concurrency budgets (TODO: optimize)
     budgets: dict[str, int] = {}
@@ -407,4 +437,4 @@ def run_task_graph(graph: Graph, max_workers: int | None = None, executor_type: 
     assert not leaves, 'Something went wrong'
     assert not in_process, 'Something went wrong'
     assert all(n == 0 for n in occupied.values()), 'Something went wrong'
-    return
+    return {'stats': stats}
