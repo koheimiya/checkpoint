@@ -1,20 +1,24 @@
 from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Callable, Generic, NewType, Type, TypeVar, Any, cast, overload
+from typing import Callable, Generic, NewType, TypeVar, Any, cast, overload
 from typing_extensions import ParamSpec, Concatenate, Self
+import os
+from pathlib import Path
 
 import logging
 import dill
 import zlib
 import diskcache as dc
 
-from concurrent.futures import ProcessPoolExecutor, Future, ThreadPoolExecutor, wait, FIRST_COMPLETED
-from functools import singledispatch, wraps
+from concurrent.futures import ProcessPoolExecutor, Future, wait, FIRST_COMPLETED, Executor
+from functools import wraps
 import inspect
 import json
 
-from checkpoint.env import CHECKPOINT_PATH
+
+CHECKPOINT_PATH = Path(os.getenv('CP_CACHE_DIR', './.cache')) / 'checkpoint'
+CHECKPOINT_PATH.mkdir(parents=True, exist_ok=True)
 
 
 LOGGER = logging.getLogger(__file__)
@@ -38,8 +42,7 @@ class Database(Generic[T, D]):
     timestamp_cache: dc.Cache
 
     @classmethod
-    def make(cls, name: str, compress_level: int) -> Self:
-        path = str(CHECKPOINT_PATH / name)
+    def make(cls, path: str, compress_level: int) -> Self:
         return Database(
                 path=path,
                 compress_level=compress_level,
@@ -110,17 +113,14 @@ class Task(Generic[T]):
         db = self.task_factory.db
         return db.load(self.key)
 
-    # def __eq__(self, other) -> bool:
-    #     if not isinstance(other, Task):
-    #         return False
-    #     return self.to_tuple() == other.to_tuple()
+    def run(self, *, executor: Executor | None = None) -> T:
+        return self.run_with_info(executor=executor)[0]
 
-    def run(self, *, max_workers: int | None = None) -> T:
-        return self.run_with_info(max_workers=max_workers)[0]
-
-    def run_with_info(self, *, max_workers: int | None = None) -> tuple[T, dict[str, Any]]:
+    def run_with_info(self, *, executor: Executor | None = None) -> tuple[T, dict[str, Any]]:
         graph = Graph.build(self)
-        info = run_task_graph(graph, max_workers=max_workers)
+        if executor is None:
+            executor = ProcessPoolExecutor()
+        info = run_task_graph(graph=graph, executor=executor)
         return self.get_result(), info
 
     def clear(self) -> None:
@@ -155,11 +155,6 @@ class TaskFactory(Generic[P, R]):
             timestamp = None
         return Task(runner, task_factory=self, key=key, timestamp=timestamp)
 
-    # def __eq__(self, other) -> bool:
-    #     if not isinstance(other, TaskFactory):
-    #         return False
-    #     return (self.get_db_path() == other.get_db_path())
-
 
 @overload
 def task(fn: RunnerFactory[P, R]) -> TaskFactory[P, R]: ...
@@ -180,7 +175,7 @@ def _task(
 
     def decorator(fn: RunnerFactory[P, R]) -> TaskFactory[P, R]:
         db_path = str(CHECKPOINT_PATH / _serialize_function(fn))
-        db = Database.make(name=db_path, compress_level=compress_level)
+        db = Database.make(path=db_path, compress_level=compress_level)
         return wraps(fn)(
                 TaskFactory(runner_factory=fn, db=db, max_concurrency=max_concurrency)
                 )
@@ -339,7 +334,7 @@ def _run_task(task_data: bytes) -> tuple[str, Json]:
     return task.to_tuple()
 
 
-def run_task_graph(graph: Graph, max_workers: int | None = None, executor_type: Type[ProcessPoolExecutor] | Type[ThreadPoolExecutor] = ProcessPoolExecutor) -> dict[str, Any]:
+def run_task_graph(graph: Graph, executor: Executor) -> dict[str, Any]:
     """ Consume task graph concurrently.
     """
     active_subgraphs = walk_subgraph_to_update(graph)
@@ -391,7 +386,7 @@ def run_task_graph(graph: Graph, max_workers: int | None = None, executor_type: 
         occupied[path] = 0
 
     # Execute tasks
-    with executor_type(max_workers=max_workers) as executor:
+    with executor as executor:
         in_process: set[Future[Key]] = set()
         while leaves or in_process:
             LOGGER.info(

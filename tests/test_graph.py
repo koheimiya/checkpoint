@@ -1,4 +1,4 @@
-from checkpoint.graph import task, requires
+from checkpoint import task, requires
 
 
 @task(max_concurrency=1)
