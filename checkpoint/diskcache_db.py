@@ -18,6 +18,69 @@ D = TypeVar('D')
 
 
 @dataclass
+class DiskCacheDB2(Generic[T, D]):
+    path: str
+    compress_level: int | None
+    result_cache: dc.Cache
+    timestamp_cache: dc.Cache
+
+    @classmethod
+    def make(cls, name: str, compress_level: int | None) -> Self:
+        path = str(CHECKPOINT_PATH / name)
+        disk_args_compress = {
+                'disk': DillDisk,
+                'disk_compress_level': compress_level
+                }
+        disk_args = {
+                'disk': DillDisk,
+                'disk_compress_level': None
+                }
+        return DiskCacheDB2(
+                path=path,
+                compress_level=compress_level,
+                result_cache=dc.Cache(path + '/result', **disk_args_compress),
+                timestamp_cache=dc.Cache(path + '/timestamp', **disk_args),
+                )
+
+    def save(self, key: Json, obj: T) -> datetime:
+        with self.result_cache as ref:
+            ref[key] = obj
+
+        timestamp = datetime.now()
+        with self.timestamp_cache as ref:
+            ref[key] = timestamp.timestamp()
+        return timestamp
+
+    def load(self, key: Json) -> T:
+        with self.result_cache as ref:
+            return ref[key]
+
+    def load_timestamp(self, key: Json) -> datetime:
+        with self.timestamp_cache as ref:
+            return datetime.fromtimestamp(ref[key])
+
+    def __contains__(self, key: T) -> bool:
+        with self.result_cache as ref:
+            return key in ref
+
+    def list_keys(self) -> list[str]:
+        with self.result_cache as ref:
+            return list(map(str, ref))
+
+    def _get_caches(self) -> list[dc.Cache]:
+        return [self.result_cache, self.timestamp_cache]
+
+    def clear(self) -> None:
+        for cache in self._get_caches():
+            cache.clear()
+
+    def delete(self, key: Json) -> None:
+        for cache in self._get_caches():
+            with cache as ref:
+                del ref[key]
+
+
+@dataclass
 class DiskCacheDB(Generic[T, D]):
     path: str
     compress_level: int | None
@@ -76,6 +139,10 @@ class DiskCacheDB(Generic[T, D]):
     def load_deps(self, key: Json) -> list[D]:
         with self.dependency_cache as ref:
             return ref[key]
+
+    def __contains__(self, key: T) -> bool:
+        with self.result_cache as ref:
+            return key in ref
 
     def list_keys(self) -> list[str]:
         with self.result_cache as ref:

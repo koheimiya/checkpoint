@@ -1,16 +1,13 @@
 from __future__ import annotations
-from dataclasses import asdict, dataclass
-from typing import Callable, Generic, TypeVar, Any, cast
+from dataclasses import dataclass
+from datetime import datetime
+from typing import Callable, Generic, Type, TypeVar, Any, cast
 from typing_extensions import ParamSpec, Concatenate, Self
 
-# import dill
-# import multiprocessing.reduction
-# dill.Pickler.dumps, dill.Pickler.loads = dill.dumps, dill.loads  # type: ignore
-# multiprocessing.reduction.ForkingPickler = dill.Pickler
-# multiprocessing.reduction.dump = dill.dump
+import logging
+import dill
 
-from concurrent.futures import ProcessPoolExecutor, Future, wait, FIRST_COMPLETED, ThreadPoolExecutor
-from multiprocessing import get_context
+from concurrent.futures import ProcessPoolExecutor, Future, ThreadPoolExecutor, wait, FIRST_COMPLETED
 from functools import wraps
 import inspect
 import json
@@ -19,7 +16,10 @@ from checkpoint.env import CHECKPOINT_PATH
 
 
 from .base_db import Json
-from .diskcache_db import DiskCacheDB
+from .diskcache_db import DiskCacheDB2
+
+
+LOGGER = logging.getLogger(__file__)
 
 
 T = TypeVar('T')
@@ -32,43 +32,20 @@ RunnerFactory = Callable[P, Runner[R]]
 
 
 @dataclass(frozen=True)
-class DelayedRunner(Generic[T]):
-    """ Delayed call on a runner factory """
-    runner_factory: RunnerFactory[..., T]
-    arguments: dict[str, Any]
-    _runner: Runner[T] | None
-
-    @classmethod
-    def make(cls, runner_factory: RunnerFactory[P, T], *args: P.args, **kwargs: P.kwargs) -> Self:
-        runner = runner_factory(*args, **kwargs)
-        return DelayedRunner(runner_factory=runner_factory, arguments=_normalize_arguments(runner_factory, *args, **kwargs), _runner=runner)
-
-    def without_runner(self) -> Self:
-        return DelayedRunner(runner_factory=self.runner_factory, arguments=self.arguments, _runner=None)
-
-    def __call__(self) -> T:
-        return self.runner_factory(**self.arguments)()
-
-    def __eq__(self, other) -> bool:
-        if not isinstance(other, DelayedRunner):
-            return False
-        return (self.runner_factory is other.runner_factory) and (self.arguments == other.arguments)
-
-
-@dataclass(frozen=True)
 class Task(Generic[T]):
     """ Runner with cache """
-    _delayed_runner: DelayedRunner[T]
+    runner: Runner[T]
     task_factory: TaskFactory[..., T]
     key: Json
+    timestamp: datetime | None
 
     def set_result(self) -> None:
-        db = self.task_factory.connect_db()
-        out = self._delayed_runner()
+        db = self.task_factory.db
+        out = self.runner()
         db.save(self.key, out)
 
     def get_result(self) -> T:
-        db = self.task_factory.connect_db()
+        db = self.task_factory.db
         return db.load(self.key)
 
     def __eq__(self, other) -> bool:
@@ -76,21 +53,18 @@ class Task(Generic[T]):
             return False
         return self.serialize() == other.serialize()
 
-    def run(self, **executor_params) -> T:
+    def run(self, max_workers: int | None = None) -> T:
         graph = Graph.build(self)
-        run_task_graph(graph, executor_params=executor_params)
+        run_task_graph(graph, max_workers=max_workers)
         return self.get_result()
 
     def clear(self) -> None:
-        db = self.task_factory.connect_db()
+        db = self.task_factory.db
         db.delete(self.key)
 
     def serialize(self) -> Json:
         d = {'db_path': self.task_factory.get_db_path(), 'key': json.loads(self.key)}
         return cast(Json, json.dumps(d))
-
-    def without_runner(self) -> Self:
-        return Task(_delayed_runner=self._delayed_runner.without_runner(), task_factory=self.task_factory, key=self.key)
 
 
 AnyTask = Task[Any]
@@ -99,23 +73,22 @@ AnyTask = Task[Any]
 @dataclass
 class TaskFactory(Generic[P, R]):
     runner_factory: RunnerFactory[P, R]
-    _compress_level: int | None
+    db: DiskCacheDB2
 
     def get_db_path(self) -> str:
-        return str(CHECKPOINT_PATH / _serialize_function(self.runner_factory))
-
-    def connect_db(self) -> DiskCacheDB:
-        return DiskCacheDB.make(name=self.get_db_path(), compress_level=self._compress_level)
+        return self.db.path
 
     def clear(self) -> None:
-        db = self.connect_db()
-        db.clear()
+        self.db.clear()
 
     def __call__(self, *args: P.args, **kwargs: P.kwargs) -> Task[R]:
-        runner = DelayedRunner.make(self.runner_factory, *args, **kwargs)
-        # runner = self.runner_factory(*args, **kwargs)
+        runner = self.runner_factory(*args, **kwargs)
         key = _serialize_arguments(self.runner_factory, *args, **kwargs)
-        return Task(runner, task_factory=self, key=key)
+        try:
+            timestamp = self.db.load_timestamp(key)
+        except KeyError:
+            timestamp = None
+        return Task(runner, task_factory=self, key=key, timestamp=timestamp)
 
     def __eq__(self, other) -> bool:
         if not isinstance(other, TaskFactory):
@@ -129,8 +102,10 @@ def task(
     """ Convert a runner factory into a task factory. """
 
     def decorator(fn: RunnerFactory[P, R]) -> TaskFactory[P, R]:
+        db_path = str(CHECKPOINT_PATH / _serialize_function(fn))
+        db = DiskCacheDB2.make(name=db_path, compress_level=compress_level)
         return wraps(fn)(
-                TaskFactory(runner_factory=fn, _compress_level=compress_level)
+                TaskFactory(runner_factory=fn, db=db)
                 )
     return decorator
 
@@ -174,7 +149,7 @@ def requires(task: Task[T]) -> Connector[T, P, R]:
 
 def get_upstream(task: Task[Any]) -> list[Task[Any]]:
     deps: list[Task[Any]] = []
-    task_fn = task._delayed_runner._runner
+    task_fn = task.runner
     while isinstance(task_fn, Connected):
         deps.append(task_fn.task)
         task_fn = task_fn.fn
@@ -184,43 +159,53 @@ def get_upstream(task: Task[Any]) -> list[Task[Any]]:
 @dataclass
 class Graph:
     root: Task[Any]
+    timestamp: datetime | None  # None indicate update is needed.
     downstream: Task[Any] | None
     upstream_graphs: list[Graph]
 
     @classmethod
     def build(cls, task: Task[Any], downstream: Task[Any] | None = None) -> Self:
-        upstream_tasks = get_upstream(task)
+        upstream_graphs = [Graph.build(t, downstream=task) for t in get_upstream(task)]
+        timestamp = task.timestamp
+        if timestamp is not None:
+            upstream_timestamps = [ug.timestamp for ug in upstream_graphs]
+            need_update = any(uts is None or timestamp < uts for uts in upstream_timestamps)
+            if need_update:
+                timestamp = None
+
         out = Graph(
                 root=task,
+                timestamp=timestamp,
                 downstream=downstream,
-                upstream_graphs=[Graph.build(t, downstream=task) for t in upstream_tasks]
+                upstream_graphs=upstream_graphs,
                 )
         return out
 
 
-def _run_task(task: AnyTask) -> Json:
-    task.set_result()  # TODO: use time stamp
+def _run_task(task_data: bytes) -> Json:
+    task = dill.loads(task_data)
+    assert isinstance(task, Task)
+    task.set_result()
     return task.serialize()
 
 
-def run_task_graph(graph: Graph, executor_params: dict[str, Any] | None = None) -> None:
+def run_task_graph(graph: Graph, max_workers: int | None = None, executor_type: Type[ProcessPoolExecutor] | Type[ThreadPoolExecutor] = ProcessPoolExecutor) -> None:
     """ Run task graph with concurrently.
     """
-    if executor_params is None:
-        executor_params = {}
-
     # Parse graph in a flat format
     nodes: dict[Json, AnyTask] = {}
-    descentdants: dict[Json, set[Json]] = {}
+    descendants: dict[Json, set[Json]] = {}
     precedents: dict[Json, set[Json]] = {}
     leaves: set[Json] = set()
-    for g in walk_graph(graph):
+    for g in walk_subgraph_to_update(graph):
         root_key = g.root.serialize()
-        nodes[root_key] = g.root.without_runner()
-        if root_key not in descentdants:
-            descentdants[root_key] = set()
+        nodes[root_key] = g.root
+
+        if root_key not in descendants:
+            descendants[root_key] = set()
         if g.downstream:
-            descentdants[root_key].add(g.downstream.serialize())
+            descendants[root_key].add(g.downstream.serialize())
+
         if g.upstream_graphs:
             if root_key not in precedents:
                 precedents[root_key] = set(ug.root.serialize() for ug in g.upstream_graphs)
@@ -229,16 +214,16 @@ def run_task_graph(graph: Graph, executor_params: dict[str, Any] | None = None) 
         else:
             leaves.add(root_key)
 
-    with ProcessPoolExecutor(**executor_params) as executor:
-    # with ThreadPoolExecutor(**executor_params) as executor:
+    with executor_type(max_workers=max_workers) as executor:
         in_process: set[Future[Json]] = set()
-        while descentdants:
-            print(len(descentdants), len(precedents), len(leaves), len(in_process))
-            # breakpoint()
+        while descendants:
+            LOGGER.info(
+                    f'desc: {len(descendants)}, prec: {len(precedents)}, leaves: {len(leaves)}, in_process: {len(in_process)}'
+                    )
 
             # Submit all leaf tasks
             for leaf in leaves:
-                future = executor.submit(_run_task, nodes[leaf])
+                future = executor.submit(_run_task, dill.dumps(nodes[leaf], protocol=dill.HIGHEST_PROTOCOL, byref=True))
                 in_process.add(future)
 
             # Wait for the first tasks to complete
@@ -249,29 +234,30 @@ def run_task_graph(graph: Graph, executor_params: dict[str, Any] | None = None) 
             for done_future in done:
                 done_task = done_future.result()
                 nodes.pop(done_task)
-                next_tasks = descentdants.pop(done_task)
+                next_tasks = descendants.pop(done_task)
                 for next_task in next_tasks:
                     if next_task is None:
                         continue
                     deps = precedents[next_task]
                     deps.remove(done_task)
                     if not deps:
-                        leaves.add(next_task)
                         precedents.pop(next_task)
+                        leaves.add(next_task)
 
     # Confirm the graph is empty
-    assert not descentdants, 'Something went wrong'
+    assert not descendants, 'Something went wrong'
     assert not precedents, 'Something went wrong'
     assert not leaves, 'Something went wrong'
     assert not in_process, 'Something went wrong'
     return
 
 
-def walk_graph(graph: Graph) -> list[Graph]:
-    out: list[Graph] = [graph]
-    to_expand: list[Graph] = graph.upstream_graphs.copy()
+def walk_subgraph_to_update(graph: Graph) -> list[Graph]:
+    out: list[Graph] = []
+    to_expand: list[Graph] = [graph]
     while to_expand:
         g = to_expand.pop()
-        out.append(g)
-        to_expand.extend(g.upstream_graphs)
+        if g.timestamp is None:
+            out.append(g)
+            to_expand.extend(g.upstream_graphs)
     return out
