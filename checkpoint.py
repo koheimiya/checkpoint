@@ -341,49 +341,55 @@ def run_task_graph(graph: Graph, executor: Executor) -> dict[str, Any]:
 
     # Parse graph in a flat format
     Key = tuple[str, Json]
-    nodes: dict[Key, AnyTask] = {}
+    nodes: dict[Key, AnyTask] = {g.root.to_tuple(): g.root for g in active_subgraphs}
+    task_factories: dict[str, TaskFactory[..., Any]] = {k[0]: nodes[k].task_factory for k in nodes}
+
     descendants: dict[Key, set[Key]] = {}
     precedents: dict[Key, set[Key]] = {}
-    leaves: set[Key] = set()
-    nodes_by_path: dict[str, set[Json]] = {}
+    node_groups: dict[str, set[Json]] = {}
     for g in active_subgraphs:
         root_key = g.root.to_tuple()
-        nodes[root_key] = g.root
+        assert nodes[root_key].to_tuple() == root_key
+        assert task_factories[g.root.task_factory.get_db_path()] is g.root.task_factory
 
+        # Aggregate downsteram
+        downstream_keys = set() if g.downstream is None else {g.downstream.to_tuple()}.intersection(nodes)
         if root_key not in descendants:
-            descendants[root_key] = set()
-        if g.downstream:
-            descendants[root_key].add(g.downstream.to_tuple())
-
-        if g.upstream_graphs:
-            if root_key not in precedents:
-                precedents[root_key] = set(ug.root.to_tuple() for ug in g.upstream_graphs)
-            else:
-                assert precedents[root_key] == set(ug.root.to_tuple() for ug in g.upstream_graphs), 'Same tasks have to have the same upstream'
+            descendants[root_key] = downstream_keys
         else:
-            leaves.add(root_key)
+            descendants[root_key].update(downstream_keys)
 
+        # Upstream should be the same if the root is the same
+        upstream_keys = set(ug.root.to_tuple() for ug in g.upstream_graphs).intersection(nodes)
+        if root_key not in precedents:
+            precedents[root_key] = upstream_keys
+        else:
+            assert precedents[root_key] == upstream_keys, 'Same tasks have to have the same upstream'
+
+        # Group nodes by db_path
         path, arg_key = root_key
-        if path not in nodes_by_path:
-            nodes_by_path[path] = set()
-        nodes_by_path[path].add(arg_key)
+        if path not in node_groups:
+            node_groups[path] = {arg_key}
+        else:
+            node_groups[path].add(arg_key)
 
-    stats = {k: len(args) for k, args in nodes_by_path.items()}
+    stats = {k: len(args) for k, args in node_groups.items()}
     LOGGER.info(f'Following tasks will be called: {stats}')
 
-    # Read concurrency budgets (TODO: optimize)
+    # Read concurrency budgets
     budgets: dict[str, int] = {}
     occupied: dict[str, int] = {}
-    for g in active_subgraphs:
-        task = g.root
-        mc = task.task_factory.max_concurrency
-        if mc is None:
-            mc = 99999
-        path = task.task_factory.get_db_path()
-        if path in budgets:
-            continue
-        budgets[path] = mc
-        occupied[path] = 0
+    for path in node_groups:
+        mc = task_factories[path].max_concurrency
+        if mc is not None:
+            budgets[path] = mc
+            occupied[path] = 0
+
+    # Collect leaf nodes by groups
+    leaves: dict[str, list[Json]] = {
+            path: [k for k in keys if not precedents[path, k]]
+            for path, keys in node_groups.items()
+            }
 
     # Execute tasks
     with executor as executor:
@@ -393,16 +399,21 @@ def run_task_graph(graph: Graph, executor: Executor) -> dict[str, Any]:
                     f'desc: {len(descendants)}, prec: {len(precedents)}, leaves: {len(leaves)}, in_process: {len(in_process)}'
                     )
 
-            # Submit all leaf tasks  (TODO: optimize)
-            leftover: set[Key] = set()
-            for leaf in leaves:
-                path = leaf[0]
-                if occupied[path] < budgets[path]:
-                    occupied[path] += 1
-                    future = executor.submit(_run_task, dill.dumps(nodes[leaf], protocol=dill.HIGHEST_PROTOCOL, byref=True))
-                    in_process.add(future)
+            # Submit all leaf tasks
+            leftover: dict[str, list[Json]] = {}
+            for path, keys in leaves.items():
+                if path in budgets:
+                    free = budgets[path] - occupied[path]
+                    to_submit, to_hold = keys[:free], keys[free:]
+                    occupied[path] += len(to_submit)
+                    if to_hold:
+                        leftover[path] = to_hold
                 else:
-                    leftover.add(leaf)
+                    to_submit = keys
+
+                for key in to_submit:
+                    future = executor.submit(_run_task, dill.dumps(nodes[path, key], protocol=dill.HIGHEST_PROTOCOL, byref=True))
+                    in_process.add(future)
 
             # Wait for the first tasks to complete
             done, in_process = wait(in_process, return_when=FIRST_COMPLETED)
@@ -411,25 +422,31 @@ def run_task_graph(graph: Graph, executor: Executor) -> dict[str, Any]:
             leaves = leftover
             for done_future in done:
                 done_task = done_future.result()
-                path = done_task[0]
-                occupied[path] -= 1
-                assert occupied[path] >= 0
 
+                # Update occupied
+                path = done_task[0]
+                if path in occupied:
+                    occupied[path] -= 1
+                    assert occupied[path] >= 0
+
+                # Remove node from graph
                 nodes.pop(done_task)
+                assert not precedents.pop(done_task)
                 next_tasks = descendants.pop(done_task)
+
+                # update precedents and leaves
                 for next_task in next_tasks:
-                    if next_task is None:
-                        continue
-                    deps = precedents[next_task]
-                    deps.remove(done_task)
-                    if not deps:
-                        precedents.pop(next_task)
-                        leaves.add(next_task)
+                    precs = precedents[next_task]
+                    precs.remove(done_task)
+                    if not precs:
+                        path_next, key_next = next_task
+                        if path_next not in leaves:
+                            leaves[path_next] = [key_next]
+                        else:
+                            leaves[path_next].append(key_next)
 
     # Confirm the graph is empty
     assert not descendants, 'Something went wrong'
     assert not precedents, 'Something went wrong'
-    assert not leaves, 'Something went wrong'
-    assert not in_process, 'Something went wrong'
     assert all(n == 0 for n in occupied.values()), 'Something went wrong'
     return {'stats': stats}

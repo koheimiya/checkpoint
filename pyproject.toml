@@ -1,7 +1,7 @@
 [tool.poetry]
 name = "checkpoint-tool"
-version = "0.1.0"
-description = "`functools.cache` becomes persistent and more."
+version = "0.2.0"
+description = "A lightweight workflow management tool written in pure Python"
 authors = ["Kohei Miyaguchi <koheimiyaguchi@gmail.com>"]
 license = "MIT License"
 homepage = "https://github.com/koheimiya/checkpoint"
@@ -12,10 +12,8 @@ packages = [{include = "checkpoint"}]
 [tool.poetry.dependencies]
 python = "^3.9"
 dill = "^0.3.6"
-sqlitedict = "^2.1.0"
 typing-extensions = "^4.5.0"
 diskcache = "^5.6.1"
-celery = "^5.2.7"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^7.3.1"
