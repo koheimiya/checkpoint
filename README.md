@@ -36,7 +36,7 @@ def choose(n: int, k: int):
 
 # Build the task graph to compute the return value of choose(6, 3)
 # and greedily consume it with `concurrent.futures.ProcessPoolExecutor` (i.e., in parallel as far as possible).
-# The cache is stored at `$CP_CACHE_DIR/checkpoint/{module_name}.choice/...`
+# The cache is stored at `$CP_CACHE_DIR/checkpoint/{module_name}.{function_name}/...`
 # and reused whenever available.
 ans = choose(6, 3).run()
 ```
@@ -46,7 +46,7 @@ It is possible to selectively discard cache:
 ### after some modificaiton of choose(3, 3) ...
 choose(3, 3).clear()      # selectively discard the cache corresponding to the modification
 ans = choose(6, 3).run()  # ans is recomputed tracing back to the computation of choose(3, 3)
-choose.clear()            # delete all cache
+choose.clear()            # delete all cache, equivalent to `rm -r $CP_CACHE_DIR/checkpoint/{module_name}.choose`
 ```
 
 More complex inputs can be used as long as it is JSON serializable:
