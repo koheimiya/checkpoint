@@ -1,11 +1,13 @@
 from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Callable, Generic, Type, TypeVar, Any, cast
+from typing import Callable, Generic, NewType, Type, TypeVar, Any, cast, overload
 from typing_extensions import ParamSpec, Concatenate, Self
 
 import logging
 import dill
+import zlib
+import diskcache as dc
 
 from concurrent.futures import ProcessPoolExecutor, Future, ThreadPoolExecutor, wait, FIRST_COMPLETED
 from functools import wraps
@@ -15,17 +17,76 @@ import json
 from checkpoint.env import CHECKPOINT_PATH
 
 
-from .base_db import Json
-from .diskcache_db import DiskCacheDB2
-
-
 LOGGER = logging.getLogger(__file__)
+
+
+Json = NewType('Json', str)
 
 
 K = TypeVar('K')
 T = TypeVar('T')
 P = ParamSpec('P')
 R = TypeVar('R')
+D = TypeVar('D')
+
+
+@dataclass
+class Database(Generic[T, D]):
+    path: str
+    compress_level: int
+    result_cache: dc.Cache
+    timestamp_cache: dc.Cache
+
+    @classmethod
+    def make(cls, name: str, compress_level: int) -> Self:
+        path = str(CHECKPOINT_PATH / name)
+        return Database(
+                path=path,
+                compress_level=compress_level,
+                result_cache=dc.Cache(path + '/result'),
+                timestamp_cache=dc.Cache(path + '/timestamp'),
+                )
+
+    def save(self, key: Json, obj: T) -> datetime:
+        data = dill.dumps(obj, protocol=dill.HIGHEST_PROTOCOL, byref=True)
+        data = zlib.compress(data, level=self.compress_level)
+        with self.result_cache as ref:
+            ref[key] = data
+
+        timestamp = datetime.now()
+        with self.timestamp_cache as ref:
+            ref[key] = timestamp.timestamp()
+        return timestamp
+
+    def load(self, key: Json) -> T:
+        with self.result_cache as ref:
+            data = ref[key]
+        return dill.loads(zlib.decompress(data))
+
+    def load_timestamp(self, key: Json) -> datetime:
+        with self.timestamp_cache as ref:
+            ts = ref[key]
+        return datetime.fromtimestamp(ts)
+
+    def __contains__(self, key: T) -> bool:
+        with self.result_cache as ref:
+            return key in ref
+
+    def list_keys(self) -> list[str]:
+        with self.result_cache as ref:
+            return list(map(str, ref))
+
+    def _get_caches(self) -> list[dc.Cache]:
+        return [self.result_cache, self.timestamp_cache]
+
+    def clear(self) -> None:
+        for cache in self._get_caches():
+            cache.clear()
+
+    def delete(self, key: Json) -> None:
+        for cache in self._get_caches():
+            with cache as ref:
+                del ref[key]
 
 
 Runner = Callable[[], T]  # Delayed computation
@@ -74,7 +135,8 @@ AnyTask = Task[Any]
 @dataclass
 class TaskFactory(Generic[P, R]):
     runner_factory: RunnerFactory[P, R]
-    db: DiskCacheDB2
+    db: Database
+    max_concurrency: int | None
 
     def get_db_path(self) -> str:
         return self.db.path
@@ -97,18 +159,28 @@ class TaskFactory(Generic[P, R]):
         return (self.get_db_path() == other.get_db_path())
 
 
-def task(
-        compress_level: int | None = None
+@overload
+def task(fn: RunnerFactory[P, R]) -> TaskFactory[P, R]: ...
+@overload
+def task(*, compress_level: int = 0, max_concurrency: int | None = None) -> Callable[[RunnerFactory[P, R]], TaskFactory[P, R]]: ...
+def task(*args, **kwargs) -> Any:
+    if args:
+        fn, = args
+        return _task()(fn)
+    else:
+        return _task(**kwargs)
+
+
+def _task(
+        *, compress_level: int = 0, max_concurrency: int | None = None
         ) -> Callable[[RunnerFactory[P, R]], TaskFactory[P, R]]:
     """ Convert a runner factory into a task factory. """
-    # TODO: add max_concurrency
-    # TODO: allow non-parenthesis decoration
 
     def decorator(fn: RunnerFactory[P, R]) -> TaskFactory[P, R]:
         db_path = str(CHECKPOINT_PATH / _serialize_function(fn))
-        db = DiskCacheDB2.make(name=db_path, compress_level=compress_level)
+        db = Database.make(name=db_path, compress_level=compress_level)
         return wraps(fn)(
-                TaskFactory(runner_factory=fn, db=db)
+                TaskFactory(runner_factory=fn, db=db, max_concurrency=max_concurrency)
                 )
     return decorator
 
@@ -250,12 +322,14 @@ def _run_task(task_data: bytes) -> Json:
 def run_task_graph(graph: Graph, max_workers: int | None = None, executor_type: Type[ProcessPoolExecutor] | Type[ThreadPoolExecutor] = ProcessPoolExecutor) -> None:
     """ Consume task graph concurrently.
     """
+    active_subgraphs = walk_subgraph_to_update(graph)
+
     # Parse graph in a flat format
     nodes: dict[Json, AnyTask] = {}
     descendants: dict[Json, set[Json]] = {}
     precedents: dict[Json, set[Json]] = {}
     leaves: set[Json] = set()
-    for g in walk_subgraph_to_update(graph):
+    for g in active_subgraphs:
         root_key = g.root.serialize()
         nodes[root_key] = g.root
 
@@ -272,25 +346,50 @@ def run_task_graph(graph: Graph, max_workers: int | None = None, executor_type: 
         else:
             leaves.add(root_key)
 
+    # Read concurrency budgets
+    budgets: dict[str, int] = {}
+    occupied: dict[str, int] = {}
+    for g in active_subgraphs:
+        task = g.root
+        mc = task.task_factory.max_concurrency
+        if mc is None:
+            mc = 99999
+        path = task.task_factory.get_db_path()
+        if path in budgets:
+            continue
+        budgets[path] = mc
+        occupied[path] = 0
+
+    # Execute tasks
     with executor_type(max_workers=max_workers) as executor:
         in_process: set[Future[Json]] = set()
-        while leaves:
+        while leaves or in_process:
             LOGGER.info(
                     f'desc: {len(descendants)}, prec: {len(precedents)}, leaves: {len(leaves)}, in_process: {len(in_process)}'
                     )
 
             # Submit all leaf tasks
+            leftover: set[Json] = set()
             for leaf in leaves:
-                future = executor.submit(_run_task, dill.dumps(nodes[leaf], protocol=dill.HIGHEST_PROTOCOL, byref=True))
-                in_process.add(future)
+                path = json.loads(leaf)['db_path']
+                if occupied[path] < budgets[path]:
+                    occupied[path] += 1
+                    future = executor.submit(_run_task, dill.dumps(nodes[leaf], protocol=dill.HIGHEST_PROTOCOL, byref=True))
+                    in_process.add(future)
+                else:
+                    leftover.add(leaf)
 
             # Wait for the first tasks to complete
             done, in_process = wait(in_process, return_when=FIRST_COMPLETED)
 
             # Update graph
-            leaves = set()
+            leaves = leftover
             for done_future in done:
                 done_task = done_future.result()
+                path = json.loads(done_task)['db_path']
+                occupied[path] -= 1
+                assert occupied[path] >= 0
+
                 nodes.pop(done_task)
                 next_tasks = descendants.pop(done_task)
                 for next_task in next_tasks:
@@ -307,4 +406,5 @@ def run_task_graph(graph: Graph, max_workers: int | None = None, executor_type: 
     assert not precedents, 'Something went wrong'
     assert not leaves, 'Something went wrong'
     assert not in_process, 'Something went wrong'
+    assert all(n == 0 for n in occupied.values()), 'Something went wrong'
     return

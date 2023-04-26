@@ -1,7 +1,7 @@
 from checkpoint.graph import task, requires_list
 
 
-@task()
+@task(max_concurrency=1)
 def choose(n: int, k: int):
 
     if 0 < k < n:
