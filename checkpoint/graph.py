@@ -113,7 +113,7 @@ class Task(Generic[T]):
     def __eq__(self, other) -> bool:
         if not isinstance(other, Task):
             return False
-        return self.serialize() == other.serialize()
+        return self.to_tuple() == other.to_tuple()
 
     def run(self, max_workers: int | None = None) -> T:
         graph = Graph.build(self)
@@ -124,9 +124,8 @@ class Task(Generic[T]):
         db = self.task_factory.db
         db.delete(self.key)
 
-    def serialize(self) -> Json:
-        d = {'db_path': self.task_factory.get_db_path(), 'key': json.loads(self.key)}
-        return cast(Json, json.dumps(d))
+    def to_tuple(self) -> tuple[str, Json]:
+        return self.task_factory.get_db_path(), self.key
 
 
 AnyTask = Task[Any]
@@ -312,11 +311,11 @@ def walk_subgraph_to_update(graph: Graph) -> list[Graph]:
     return out
 
 
-def _run_task(task_data: bytes) -> Json:
+def _run_task(task_data: bytes) -> tuple[str, Json]:
     task = dill.loads(task_data)
     assert isinstance(task, Task)
     task.set_result()
-    return task.serialize()
+    return task.to_tuple()
 
 
 def run_task_graph(graph: Graph, max_workers: int | None = None, executor_type: Type[ProcessPoolExecutor] | Type[ThreadPoolExecutor] = ProcessPoolExecutor) -> None:
@@ -325,28 +324,29 @@ def run_task_graph(graph: Graph, max_workers: int | None = None, executor_type: 
     active_subgraphs = walk_subgraph_to_update(graph)
 
     # Parse graph in a flat format
-    nodes: dict[Json, AnyTask] = {}
-    descendants: dict[Json, set[Json]] = {}
-    precedents: dict[Json, set[Json]] = {}
-    leaves: set[Json] = set()
+    Key = tuple[str, Json]
+    nodes: dict[Key, AnyTask] = {}
+    descendants: dict[Key, set[Key]] = {}
+    precedents: dict[Key, set[Key]] = {}
+    leaves: set[Key] = set()
     for g in active_subgraphs:
-        root_key = g.root.serialize()
+        root_key = g.root.to_tuple()
         nodes[root_key] = g.root
 
         if root_key not in descendants:
             descendants[root_key] = set()
         if g.downstream:
-            descendants[root_key].add(g.downstream.serialize())
+            descendants[root_key].add(g.downstream.to_tuple())
 
         if g.upstream_graphs:
             if root_key not in precedents:
-                precedents[root_key] = set(ug.root.serialize() for ug in g.upstream_graphs)
+                precedents[root_key] = set(ug.root.to_tuple() for ug in g.upstream_graphs)
             else:
-                assert precedents[root_key] == set(ug.root.serialize() for ug in g.upstream_graphs), 'Same tasks have to have the same upstream'
+                assert precedents[root_key] == set(ug.root.to_tuple() for ug in g.upstream_graphs), 'Same tasks have to have the same upstream'
         else:
             leaves.add(root_key)
 
-    # Read concurrency budgets
+    # Read concurrency budgets (TODO: optimize)
     budgets: dict[str, int] = {}
     occupied: dict[str, int] = {}
     for g in active_subgraphs:
@@ -362,16 +362,16 @@ def run_task_graph(graph: Graph, max_workers: int | None = None, executor_type: 
 
     # Execute tasks
     with executor_type(max_workers=max_workers) as executor:
-        in_process: set[Future[Json]] = set()
+        in_process: set[Future[Key]] = set()
         while leaves or in_process:
             LOGGER.info(
                     f'desc: {len(descendants)}, prec: {len(precedents)}, leaves: {len(leaves)}, in_process: {len(in_process)}'
                     )
 
-            # Submit all leaf tasks
-            leftover: set[Json] = set()
+            # Submit all leaf tasks  (TODO: optimize)
+            leftover: set[Key] = set()
             for leaf in leaves:
-                path = json.loads(leaf)['db_path']
+                path = leaf[0]
                 if occupied[path] < budgets[path]:
                     occupied[path] += 1
                     future = executor.submit(_run_task, dill.dumps(nodes[leaf], protocol=dill.HIGHEST_PROTOCOL, byref=True))
@@ -386,7 +386,7 @@ def run_task_graph(graph: Graph, max_workers: int | None = None, executor_type: 
             leaves = leftover
             for done_future in done:
                 done_task = done_future.result()
-                path = json.loads(done_task)['db_path']
+                path = done_task[0]
                 occupied[path] -= 1
                 assert occupied[path] >= 0
 
