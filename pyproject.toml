@@ -7,7 +7,7 @@ license = "MIT License"
 homepage = "https://github.com/koheimiya/checkpoint"
 repository = "https://github.com/koheimiya/checkpoint"
 readme = "README.md"
-packages = [{include = "checkpoint"}]
+packages = [{include = "checkpoint.py"}]
 
 [tool.poetry.dependencies]
 python = "^3.9"
