@@ -14,21 +14,30 @@ Create task with decorators:
 ```python
 from checkpoint import task, requires
 
-@task  # Mark a function as task
+# Mark a function as task
+@task
 def choose(n: int, k: int):
     if 0 < k < n:
-        @requires([choose(n - 1, k - 1), choose(n - 1, k)])  # Dependency
-        def run_task(prev_two: list[int]):
-            return sum(prev_two)
+        # Mark dependencies on other tasks;
+        # The return values of these tasks are passed as the arguments.
+        @requires(choose(n - 1, k - 1))
+        @requires(choose(n - 1, k)) 
+        def run_task(prev1: int, prev2: int) -> int:
+            # Main computation
+            return prev1 + prev2
     elif k == 0 or k == n:
+        # Dependency can change according to the task parameters (`n` and `k`).
+        # Here, we need no dependency to compute `choose(n, 1)` or `choose(n, n)`.
         def run_task() -> int:
             return 1
     else:
         raise ValueError(f'{(n, k)}')
     return run_task
 
-# Build the task graph to compute the return value of choose(6, 3) and consume it in parallel whenever possible.
-# The cache is stored at `$CP_CACHE_DIR/checkpoint/{module_name}.choice/...` and reused whenever available.
+# Build the task graph to compute the return value of choose(6, 3)
+# and greedily consume it with `concurrent.futures.ProcessPoolExecutor` (i.e., in parallel as far as possible).
+# The cache is stored at `$CP_CACHE_DIR/checkpoint/{module_name}.choice/...`
+# and reused whenever available.
 ans = choose(6, 3).run()
 ```
 
@@ -61,25 +70,39 @@ def task3(params):
 result = task3({'param1': { ... }, 'param2': { ... }}).run()
 ```
 
-Large outputs can be stored with compression:
+Task dependencies can be also specified with lists and dicts.
 ```python
-@task(compress=True)
+@task
+def task3(params):
+    @requires([task1(p) for p in params['my_param_list']])
+    @requires({k: task2(p) for k, p in params['my_param_dict'].items()})
+    def run_task(result_list, result_dict):
+        ...
+    return run_task
+
+result = task3({'my_param_list': [ ... ], 'my_param_dict': { ... }}).run()
+```
+
+Large outputs can be stored with compression via `zlib`:
+```python
+@task(compress_level=6)
 def large_output_task(*args, **kwargs):
     ...
 ```
 
-One can limit the task execution with `concurrent.futures.Executor`:
+One can control the task execution with `concurrent.futures.Executor` class:
 ```python
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 
 @task
 def my_task():
     ...
 
-my_task().run(executor=ProcessPoolExecutor(max_workers=2))
+my_task().run(executor=ProcessPoolExecutor(max_workers=2))  # Limit the number of parallel workers
+my_task().run(executor=ThreadPoolExecutor())                # Thread-based parallelism
 ```
 
-One can also control the task-wise concurrency:
+One can also control the concurrency at a task level:
 ```python
 @task(max_concurrency=2)
 def resource_intensive_task(*args, **kwargs):
