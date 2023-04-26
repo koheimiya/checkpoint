@@ -22,6 +22,7 @@ from .diskcache_db import DiskCacheDB2
 LOGGER = logging.getLogger(__file__)
 
 
+K = TypeVar('K')
 T = TypeVar('T')
 P = ParamSpec('P')
 R = TypeVar('R')
@@ -135,6 +136,9 @@ class Connected(Generic[T, P, R]):
         x = self.task.get_result()
         return self.fn(x, *args, **kwargs)
 
+    def get_tasks(self) -> list[AnyTask]:
+        return [self.task]
+
 
 AnyConnected = Connected[Any, P, R]
 Connector = Callable[[Callable[Concatenate[T, P], R]], Callable[P, R]]  # Takes (T, *P) -> R and return P -> R
@@ -147,11 +151,53 @@ def requires(task: Task[T]) -> Connector[T, P, R]:
     return decorator
 
 
+@dataclass(eq=True, frozen=True)
+class ListConnected(Generic[T, P, R]):
+    """ Connect a list of tasks to a function. """
+    tasks: list[Task[T]]
+    fn: Callable[Concatenate[list[T], P], R]
+
+    def __call__(self, *args: P.args, **kwargs: P.kwargs) -> R:
+        xs = [task.get_result() for task in self.tasks]
+        return self.fn(xs, *args, **kwargs)
+
+    def get_tasks(self) -> list[AnyTask]:
+        return self.tasks
+
+
+def requires_list(tasks: list[Task[T]]) -> Connector[list[T], P, R]:
+    """ Register a task dependency """
+    def decorator(fn: Callable[Concatenate[list[T], P], R]) -> Callable[P, R]:
+        return ListConnected(tasks, fn)
+    return decorator
+
+
+@dataclass(eq=True, frozen=True)
+class DictConnected(Generic[K, T, P, R]):
+    """ Connect a list of tasks to a function. """
+    tasks: dict[K, Task[T]]
+    fn: Callable[Concatenate[dict[K, T], P], R]
+
+    def __call__(self, *args: P.args, **kwargs: P.kwargs) -> R:
+        xs = {k: task.get_result() for k, task in self.tasks.items()}
+        return self.fn(xs, *args, **kwargs)
+
+    def get_tasks(self) -> list[AnyTask]:
+        return list(self.tasks.values())
+
+
+def requires_dict(tasks: dict[K, Task[T]]) -> Connector[dict[K, T], P, R]:
+    """ Register a task dependency """
+    def decorator(fn: Callable[Concatenate[dict[K, T], P], R]) -> Callable[P, R]:
+        return DictConnected(tasks, fn)
+    return decorator
+
+
 def get_upstream(task: Task[Any]) -> list[Task[Any]]:
     deps: list[Task[Any]] = []
     task_fn = task.runner
-    while isinstance(task_fn, Connected):
-        deps.append(task_fn.task)
+    while isinstance(task_fn, (Connected, ListConnected, DictConnected)):
+        deps.extend(task_fn.get_tasks())
         task_fn = task_fn.fn
     return deps
 
