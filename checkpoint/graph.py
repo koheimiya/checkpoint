@@ -101,6 +101,8 @@ def task(
         compress_level: int | None = None
         ) -> Callable[[RunnerFactory[P, R]], TaskFactory[P, R]]:
     """ Convert a runner factory into a task factory. """
+    # TODO: add max_concurrency
+    # TODO: allow non-parenthesis decoration
 
     def decorator(fn: RunnerFactory[P, R]) -> TaskFactory[P, R]:
         db_path = str(CHECKPOINT_PATH / _serialize_function(fn))
@@ -126,6 +128,9 @@ def _serialize_arguments(fn: Callable[P, Any], *args: P.args, **kwargs: P.kwargs
     return cast(Json, json.dumps(arguments))
 
 
+Connector = Callable[[Callable[Concatenate[T, P], R]], Callable[P, R]]  # Takes (T, *P) -> R and return P -> R
+
+
 @dataclass(eq=True, frozen=True)
 class Connected(Generic[T, P, R]):
     """ Connect a task to a function. """
@@ -138,10 +143,6 @@ class Connected(Generic[T, P, R]):
 
     def get_tasks(self) -> list[AnyTask]:
         return [self.task]
-
-
-AnyConnected = Connected[Any, P, R]
-Connector = Callable[[Callable[Concatenate[T, P], R]], Callable[P, R]]  # Takes (T, *P) -> R and return P -> R
 
 
 def requires(task: Task[T]) -> Connector[T, P, R]:
@@ -174,7 +175,7 @@ def requires_list(tasks: list[Task[T]]) -> Connector[list[T], P, R]:
 
 @dataclass(eq=True, frozen=True)
 class DictConnected(Generic[K, T, P, R]):
-    """ Connect a list of tasks to a function. """
+    """ Connect a dict of tasks to a function. """
     tasks: dict[K, Task[T]]
     fn: Callable[Concatenate[dict[K, T], P], R]
 
@@ -193,7 +194,7 @@ def requires_dict(tasks: dict[K, Task[T]]) -> Connector[dict[K, T], P, R]:
     return decorator
 
 
-def get_upstream(task: Task[Any]) -> list[Task[Any]]:
+def get_upstream(task: AnyTask) -> list[AnyTask]:
     deps: list[Task[Any]] = []
     task_fn = task.runner
     while isinstance(task_fn, (Connected, ListConnected, DictConnected)):
@@ -228,6 +229,17 @@ class Graph:
         return out
 
 
+def walk_subgraph_to_update(graph: Graph) -> list[Graph]:
+    out: list[Graph] = []
+    to_expand: list[Graph] = [graph]
+    while to_expand:
+        g = to_expand.pop()
+        if g.timestamp is None:
+            out.append(g)
+            to_expand.extend(g.upstream_graphs)
+    return out
+
+
 def _run_task(task_data: bytes) -> Json:
     task = dill.loads(task_data)
     assert isinstance(task, Task)
@@ -236,7 +248,7 @@ def _run_task(task_data: bytes) -> Json:
 
 
 def run_task_graph(graph: Graph, max_workers: int | None = None, executor_type: Type[ProcessPoolExecutor] | Type[ThreadPoolExecutor] = ProcessPoolExecutor) -> None:
-    """ Run task graph with concurrently.
+    """ Consume task graph concurrently.
     """
     # Parse graph in a flat format
     nodes: dict[Json, AnyTask] = {}
@@ -262,7 +274,7 @@ def run_task_graph(graph: Graph, max_workers: int | None = None, executor_type: 
 
     with executor_type(max_workers=max_workers) as executor:
         in_process: set[Future[Json]] = set()
-        while descendants:
+        while leaves:
             LOGGER.info(
                     f'desc: {len(descendants)}, prec: {len(precedents)}, leaves: {len(leaves)}, in_process: {len(in_process)}'
                     )
@@ -296,14 +308,3 @@ def run_task_graph(graph: Graph, max_workers: int | None = None, executor_type: 
     assert not leaves, 'Something went wrong'
     assert not in_process, 'Something went wrong'
     return
-
-
-def walk_subgraph_to_update(graph: Graph) -> list[Graph]:
-    out: list[Graph] = []
-    to_expand: list[Graph] = [graph]
-    while to_expand:
-        g = to_expand.pop()
-        if g.timestamp is None:
-            out.append(g)
-            to_expand.extend(g.upstream_graphs)
-    return out

@@ -1,22 +1,21 @@
-from checkpoint.graph import task, requires
+from checkpoint.graph import task, requires_list
 
 
 @task()
 def choose(n: int, k: int):
 
     if 0 < k < n:
-        @requires(choose(n - 1, k - 1))
-        @requires(choose(n - 1, k))
-        def runner(x: int, y: int):
-            return x + y
+        @requires_list([choose(n - 1, k - 1), choose(n - 1, k)])
+        def run(prev_two: list[int]):
+            return sum(prev_two)
 
     elif k == 0 or k == n:
-        def runner() -> int:
+        def run() -> int:
             return 1
 
     else:
         raise ValueError(f'{(n, k)}')
-    return runner
+    return run
 
 
 def test_graph():
