@@ -5,6 +5,7 @@ from typing import Callable, Generic, NewType, Type, TypeVar, Any, cast, overloa
 from typing_extensions import ParamSpec, Concatenate, Self
 import os
 from pathlib import Path
+import copy
 
 import logging
 import cloudpickle
@@ -127,11 +128,11 @@ class Task(Generic[R]):
     def run(self, *, executor: Executor | None = None) -> R:
         return self.run_with_info(executor=executor)[0]
 
-    def run_with_info(self, *, executor: Executor | None = None) -> tuple[R, dict[str, Any]]:
+    def run_with_info(self, *, executor: Executor | None = None, dump_generations: bool = False) -> tuple[R, dict[str, Any]]:
         graph = Graph.build(self)
         if executor is None:
             executor = ProcessPoolExecutor()
-        info = run_task_graph(graph=graph, executor=executor)
+        info = run_task_graph(graph=graph, executor=executor, dump_generations=dump_generations)
         return self.get_result(), info
 
     def clear(self) -> None:
@@ -336,9 +337,11 @@ def walk_subgraph_to_update(graph: Graph) -> list[Graph]:
     return out
 
 
-def run_task_graph(graph: Graph, executor: Executor) -> dict[str, Any]:
+def run_task_graph(graph: Graph, executor: Executor, dump_generations: bool = False) -> dict[str, Any]:
     """ Consume task graph concurrently.
     """
+    info = {'stats': {}, 'generations': []}
+
     active_subgraphs = walk_subgraph_to_update(graph)
 
     # Parse graph in a flat format
@@ -377,6 +380,7 @@ def run_task_graph(graph: Graph, executor: Executor) -> dict[str, Any]:
 
     stats = {k: len(args) for k, args in node_groups.items()}
     LOGGER.info(f'Following tasks will be called: {stats}')
+    info['stats'] = stats
 
     # Read concurrency budgets
     budgets: dict[str, int] = {}
@@ -397,9 +401,12 @@ def run_task_graph(graph: Graph, executor: Executor) -> dict[str, Any]:
     with executor as executor:
         in_process: set[Future[Key]] = set()
         while leaves or in_process:
+            # Log some stats
             LOGGER.info(
-                    f'desc: {len(descendants)}, prec: {len(precedents)}, leaves: {len(leaves)}, in_process: {len(in_process)}'
+                    f'nodes: {len(nodes)}, desc: {len(descendants)}, prec: {len(precedents)}, leaves: {len(leaves)}, in_process: {len(in_process)}'
                     )
+            if dump_generations:
+                info['generations'].append(copy.deepcopy(node_groups))
 
             # Submit all leaf tasks
             leftover: dict[str, list[Json]] = {}
@@ -433,10 +440,13 @@ def run_task_graph(graph: Graph, executor: Executor) -> dict[str, Any]:
 
                 # Remove node from graph
                 nodes.pop(done_task)
+                node_groups[path].remove(done_task[1])
+                if not node_groups[path]:
+                    del node_groups[path]
                 assert not precedents.pop(done_task)
                 next_tasks = descendants.pop(done_task)
 
-                # update precedents and leaves
+                # Update leaves
                 for next_task in next_tasks:
                     precs = precedents[next_task]
                     precs.remove(done_task)
@@ -448,9 +458,9 @@ def run_task_graph(graph: Graph, executor: Executor) -> dict[str, Any]:
                             leaves[path_next].append(key_next)
 
     # Sanity check
-    assert not nodes and not descendants and not precedents, f'Graph is not empty. Should not happen.'
+    assert not nodes and not descendants and not precedents and not node_groups, f'Graph is not empty. Should not happen.'
     assert all(n == 0 for n in occupied.values()), 'Incorrect task count. Should not happen.'
-    return {'stats': stats}
+    return info
 
 
 def _run_task(task_data: bytes) -> tuple[str, Json]:
