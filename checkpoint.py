@@ -1,11 +1,13 @@
 from __future__ import annotations
+from collections import defaultdict
+from itertools import repeat
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Callable, Generic, NewType, Type, TypeVar, Any, cast, overload
+from typing import Callable, ClassVar, Generic, NewType, TypeVar, Any, cast, overload
 from typing_extensions import ParamSpec, Concatenate, Self
+from graphlib import TopologicalSorter
 import os
 from pathlib import Path
-import copy
 
 import logging
 import cloudpickle
@@ -65,8 +67,9 @@ class Database(Generic[T, D]):
         return loads(zlib.decompress(data))
 
     def save(self, key: Json, obj: T) -> datetime:
+        data = self._dumps(obj)
         with self.result_cache as ref:
-            ref[key] = self._dumps(obj)
+            ref[key] = data
 
         timestamp = datetime.now()
         with self.timestamp_cache as ref:
@@ -108,12 +111,44 @@ Runner = Callable[[], R]  # Delayed computation
 RunnerFactory = Callable[P, Runner[R]]
 
 
+TaskKey = tuple[str, Json]
+
+
 @dataclass(frozen=True)
-class Task(Generic[R]):
-    """ Runner with cache """
-    runner: Runner[R]
+class DummyTask(Generic[R]):
     task_factory: TaskFactory[..., R]
     key: Json
+
+    register: ClassVar[dict[TaskKey, AnyTask]] = dict()
+
+    def to_tuple(self) -> TaskKey:
+        return self.task_factory.get_db_path(), self.key
+
+    def get_result(self) -> R:
+        db = self.task_factory.db
+        return db.load(self.key)
+
+    def clear(self) -> None:
+        self.register.clear()
+        db = self.task_factory.db
+        db.delete(self.key)
+
+    def create_task(self, producer: Callable[[], tuple[Runner[R], datetime | None]]) -> Task[R]:
+        key = self.to_tuple()
+        orig = self.register.get(key, None)
+        if orig is None:
+            runner, timestamp = producer()
+            task = Task(task_factory=self.task_factory, key=self.key, runner=runner, timestamp=timestamp)
+            self.register[key] = task
+        else:
+            task = Task(task_factory=self.task_factory, key=self.key, runner=orig.runner, timestamp=orig.timestamp)
+        return task
+
+
+@dataclass(frozen=True)
+class Task(DummyTask[R]):
+    """ Runner with cache """
+    runner: Runner[R]
     timestamp: datetime | None
 
     def set_result(self) -> None:
@@ -121,26 +156,19 @@ class Task(Generic[R]):
         out = self.runner()
         db.save(self.key, out)
 
-    def get_result(self) -> R:
-        db = self.task_factory.db
-        return db.load(self.key)
-
     def run(self, *, executor: Executor | None = None) -> R:
         return self.run_with_info(executor=executor)[0]
 
     def run_with_info(self, *, executor: Executor | None = None, dump_generations: bool = False) -> tuple[R, dict[str, Any]]:
-        graph = Graph.build(self)
+        # graph = Graph.build(self)
+        DummyTask.register.clear()
+        graph = Graph.build_from(self)
+        graph.prune()
         if executor is None:
             executor = ProcessPoolExecutor()
+        # info = run_task_graph(graph=graph, executor=executor, dump_generations=dump_generations)
         info = run_task_graph(graph=graph, executor=executor, dump_generations=dump_generations)
         return self.get_result(), info
-
-    def clear(self) -> None:
-        db = self.task_factory.db
-        db.delete(self.key)
-
-    def to_tuple(self) -> tuple[str, Json]:
-        return self.task_factory.get_db_path(), self.key
 
 
 @dataclass
@@ -153,16 +181,22 @@ class TaskFactory(Generic[P, R]):
         return self.db.path
 
     def clear(self) -> None:
+        DummyTask.register.clear()
         self.db.clear()
 
     def __call__(self, *args: P.args, **kwargs: P.kwargs) -> Task[R]:
-        runner = self.runner_factory(*args, **kwargs)
         key = _serialize_arguments(self.runner_factory, *args, **kwargs)
-        try:
-            timestamp = self.db.load_timestamp(key)
-        except KeyError:
-            timestamp = None
-        return Task(runner, task_factory=self, key=key, timestamp=timestamp)
+        dummy = DummyTask(task_factory=self, key=key)
+
+        def producer():
+            runner = self.runner_factory(*args, **kwargs)
+            try:
+                timestamp = self.db.load_timestamp(key)
+            except KeyError:
+                timestamp = None
+            return runner, timestamp
+
+        return dummy.create_task(producer=producer)
 
 
 @overload
@@ -291,7 +325,7 @@ def requires_dict(tasks: dict[K, Task[T]]) -> Connector[dict[K, T], P, R]:
     return decorator
 
 
-def get_upstream(task: AnyTask) -> list[AnyTask]:
+def get_precedents(task: AnyTask) -> list[AnyTask]:
     deps: list[Task[Any]] = []
     task_fn = task.runner
     while isinstance(task_fn, (Connected, ListConnected, DictConnected)):
@@ -302,115 +336,130 @@ def get_upstream(task: AnyTask) -> list[AnyTask]:
 
 @dataclass
 class Graph:
-    root: Task[Any]
-    timestamp: datetime | None  # None indicate update is needed.
-    downstream: Task[Any] | None
-    upstream_graphs: list[Graph]
+    nodes: dict[TaskKey, AnyTask]
+    succs: dict[TaskKey, set[TaskKey]]
+    preds: dict[TaskKey, set[TaskKey]]
 
     @classmethod
-    def build(cls, task: Task[Any], downstream: Task[Any] | None = None) -> Self:
-        upstream_graphs = [Graph.build(t, downstream=task) for t in get_upstream(task)]
-        timestamp = task.timestamp
-        if timestamp is not None:
-            upstream_timestamps = [ug.timestamp for ug in upstream_graphs]
-            need_update = any(uts is None or timestamp < uts for uts in upstream_timestamps)
-            if need_update:
-                timestamp = None
+    def build_from(cls, root: AnyTask) -> Self:
+        nodes: dict[TaskKey, AnyTask] = {}
+        successors: dict[TaskKey, set[TaskKey]] = defaultdict(set)
+        predecessors: dict[TaskKey, set[TaskKey]] = {}
 
-        out = Graph(
-                root=task,
-                timestamp=timestamp,
-                downstream=downstream,
-                upstream_graphs=upstream_graphs,
-                )
-        return out
+        to_expand: list[tuple[AnyTask, TaskKey | None]] = [(root, None)]
+        while to_expand:
+            x, desc_key = to_expand.pop()
+            key = x.to_tuple()
 
+            if desc_key is None:
+                successors[key] = set()
+            else:
+                successors[key].add(desc_key)
 
-def walk_subgraph_to_update(graph: Graph) -> list[Graph]:
-    out: list[Graph] = []
-    to_expand: list[Graph] = [graph]
-    while to_expand:
-        g = to_expand.pop()
-        if g.timestamp is None:
-            out.append(g)
-            to_expand.extend(g.upstream_graphs)
-    return out
+            if key not in predecessors:
+                nodes[key] = x
+                ps = get_precedents(x)
+                predecessors[key] = set(p.to_tuple() for p in ps)
+                to_expand.extend(zip(ps, repeat(key)))
+            else:
+                pass # Already seen x, skip registration/expansion
+
+        return Graph(nodes=nodes, succs=dict(successors), preds=predecessors)
+
+    def prune(self) -> list[AnyTask]:
+        """ Prune fresh tasks and return pruned tasks """
+        topological_order = tuple(TopologicalSorter(self.succs).static_order())[::-1]
+        fresh_timestamps: dict[TaskKey, datetime | None] = {}
+        for key in topological_order:
+            ts0 = self.nodes[key].timestamp
+            if ts0 is not None:
+                for p in self.preds[key]:
+                    ts_pred = fresh_timestamps[p]
+                    if ts_pred is None or ts_pred > ts0:
+                        ts0 = None
+                        break
+            fresh_timestamps[key] = ts0
+
+        pruned: list[AnyTask] = []
+        for key, ts0 in fresh_timestamps.items():
+            if ts0 is not None:
+                pruned.append(self.nodes[key])
+                self.pop_and_new_leaves(key, disallow_non_leaf=False)
+        return pruned
+
+    def __len__(self) -> int:
+        assert len(self.nodes) == len(self.succs) == len(self.preds)
+        return len(self.nodes)
+
+    def get_task_factories(self) -> dict[str, TaskFactory[..., Any]]:
+        return dict((path, task.task_factory) for (path, _), task in self.nodes.items())
+
+    def grouped_keys(self) -> dict[str, list[Json]]:
+        out: dict[str, list[Json]] = defaultdict(list)
+        for path, args in self.nodes:
+            out[path].append(args)
+        return dict(out)
+
+    def get_leaves(self) -> defaultdict[str, list[TaskKey]]:
+        leaves: dict[str, list[TaskKey]] = defaultdict(list)
+        for (path, args), ps in self.preds.items():
+            if not ps:
+                leaves[path].append((path, args))
+        return leaves
+
+    def pop_and_new_leaves(self, key: TaskKey, disallow_non_leaf: bool = True) -> defaultdict[str, list[TaskKey]]:
+        if disallow_non_leaf:
+            assert not self.preds[key]
+        self.nodes.pop(key)
+        self.preds.pop(key)
+        ss = self.succs.pop(key)
+
+        new_leaves: dict[str, list[TaskKey]] = defaultdict(list)
+        for next_task in ss:
+            ps = self.preds[next_task]
+            ps.remove(key)
+            if not ps:
+                path_next = next_task[0]
+                new_leaves[path_next].append(next_task)
+        return new_leaves
 
 
 def run_task_graph(graph: Graph, executor: Executor, dump_generations: bool = False) -> dict[str, Any]:
     """ Consume task graph concurrently.
     """
-    info = {'stats': {}, 'generations': []}
+    g = graph
+    grouped_keys = g.grouped_keys()
 
-    active_subgraphs = walk_subgraph_to_update(graph)
-
-    # Parse graph in a flat format
-    Key = tuple[str, Json]
-    nodes: dict[Key, AnyTask] = {g.root.to_tuple(): g.root for g in active_subgraphs}
-    task_factories: dict[str, TaskFactory[..., Any]] = {k[0]: nodes[k].task_factory for k in nodes}
-
-    descendants: dict[Key, set[Key]] = {}
-    precedents: dict[Key, set[Key]] = {}
-    node_groups: dict[str, set[Json]] = {}
-    for g in active_subgraphs:
-        root_key = g.root.to_tuple()
-        assert nodes[root_key].to_tuple() == root_key
-        assert task_factories[g.root.task_factory.get_db_path()] is g.root.task_factory
-
-        # Aggregate downsteram
-        downstream_keys = set() if g.downstream is None else {g.downstream.to_tuple()}.intersection(nodes)
-        if root_key not in descendants:
-            descendants[root_key] = downstream_keys
-        else:
-            descendants[root_key].update(downstream_keys)
-
-        # Upstream should be the same if the root is the same
-        upstream_keys = set(ug.root.to_tuple() for ug in g.upstream_graphs).intersection(nodes)
-        if root_key not in precedents:
-            precedents[root_key] = upstream_keys
-        else:
-            assert precedents[root_key] == upstream_keys, 'Same tasks have to have the same upstream'
-
-        # Group nodes by db_path
-        path, arg_key = root_key
-        if path not in node_groups:
-            node_groups[path] = {arg_key}
-        else:
-            node_groups[path].add(arg_key)
-
-    stats = {k: len(args) for k, args in node_groups.items()}
+    stats = {k: len(args) for k, args in grouped_keys.items()}
     LOGGER.info(f'Following tasks will be called: {stats}')
-    info['stats'] = stats
+    info = {'stats': stats, 'generations': []}
 
     # Read concurrency budgets
     budgets: dict[str, int] = {}
     occupied: dict[str, int] = {}
-    for path in node_groups:
-        mc = task_factories[path].max_concurrency
+    for path, fac in g.get_task_factories().items():
+        mc = fac.max_concurrency
         if mc is not None:
             budgets[path] = mc
             occupied[path] = 0
 
-    # Collect leaf nodes by groups
-    leaves: dict[str, list[Json]] = {
-            path: [k for k in keys if not precedents[path, k]]
-            for path, keys in node_groups.items()
-            }
-
     # Execute tasks
+    standby = g.get_leaves()
+    in_process: set[Future[TaskKey]] = set()
     with executor as executor:
-        in_process: set[Future[Key]] = set()
-        while leaves or in_process:
+        # TODO: Coffman-Graham algorithm?
+        # TODO: limit in_process <= max_workers
+        while standby or in_process:
             # Log some stats
             LOGGER.info(
-                    f'nodes: {len(nodes)}, desc: {len(descendants)}, prec: {len(precedents)}, leaves: {len(leaves)}, in_process: {len(in_process)}'
+                    f'nodes: {len(g.nodes)}, desc: {len(g.succs)}, prec: {len(g.preds)}, standby: {len(standby)}, in_process: {len(in_process)}'
                     )
             if dump_generations:
-                info['generations'].append(copy.deepcopy(node_groups))
+                info['generations'].append(g.grouped_keys())
 
             # Submit all leaf tasks
-            leftover: dict[str, list[Json]] = {}
-            for path, keys in leaves.items():
+            leftover: dict[str, list[TaskKey]] = {}
+            for path, keys in standby.items():
                 if path in budgets:
                     free = budgets[path] - occupied[path]
                     to_submit, to_hold = keys[:free], keys[free:]
@@ -421,14 +470,14 @@ def run_task_graph(graph: Graph, executor: Executor, dump_generations: bool = Fa
                     to_submit = keys
 
                 for key in to_submit:
-                    future = executor.submit(_run_task, cloudpickle.dumps(nodes[path, key]))
+                    future = executor.submit(_run_task, cloudpickle.dumps(g.nodes[key]))
                     in_process.add(future)
 
             # Wait for the first tasks to complete
             done, in_process = wait(in_process, return_when=FIRST_COMPLETED)
 
             # Update graph
-            leaves = leftover
+            standby = defaultdict(list, leftover)
             for done_future in done:
                 done_task = done_future.result()
 
@@ -439,26 +488,14 @@ def run_task_graph(graph: Graph, executor: Executor, dump_generations: bool = Fa
                     assert occupied[path] >= 0
 
                 # Remove node from graph
-                nodes.pop(done_task)
-                node_groups[path].remove(done_task[1])
-                if not node_groups[path]:
-                    del node_groups[path]
-                assert not precedents.pop(done_task)
-                next_tasks = descendants.pop(done_task)
+                new_leaves = g.pop_and_new_leaves(done_task)
 
-                # Update leaves
-                for next_task in next_tasks:
-                    precs = precedents[next_task]
-                    precs.remove(done_task)
-                    if not precs:
-                        path_next, key_next = next_task
-                        if path_next not in leaves:
-                            leaves[path_next] = [key_next]
-                        else:
-                            leaves[path_next].append(key_next)
+                # Update standby
+                for k, ls in new_leaves.items():
+                    standby[k].extend(ls)
 
     # Sanity check
-    assert not nodes and not descendants and not precedents and not node_groups, f'Graph is not empty. Should not happen.'
+    assert len(g) == 0, f'Graph is not empty. Should not happen.'
     assert all(n == 0 for n in occupied.values()), 'Incorrect task count. Should not happen.'
     return info
 
