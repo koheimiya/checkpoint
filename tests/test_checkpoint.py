@@ -1,3 +1,4 @@
+import pytest
 from checkpoint import task, requires
 
 
@@ -82,3 +83,17 @@ def test_multiple_tasks():
     task_b.clear()
     task_c.clear()
     assert task_c().run() == 42
+
+
+@task(compress_level=6)
+def task_raise():
+    @requires(task_a())
+    @requires(task_b())
+    def run_task(a: None, b: None):
+        raise ValueError(42)
+    return run_task
+
+
+def test_raise():
+    with pytest.raises(ValueError):
+        task_raise().run()
