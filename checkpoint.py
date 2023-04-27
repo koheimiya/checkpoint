@@ -119,7 +119,7 @@ class DummyTask(Generic[R]):
     task_factory: TaskFactory[..., R]
     key: Json
 
-    register: ClassVar[dict[TaskKey, AnyTask]] = dict()
+    _register: ClassVar[dict[TaskKey, AnyTask]] = dict()
 
     def to_tuple(self) -> TaskKey:
         return self.task_factory.get_db_path(), self.key
@@ -129,19 +129,23 @@ class DummyTask(Generic[R]):
         return db.load(self.key)
 
     def clear(self) -> None:
-        self.register.clear()
         db = self.task_factory.db
         db.delete(self.key)
 
     def create_task(self, producer: Callable[[], tuple[Runner[R], datetime | None]]) -> Task[R]:
+        is_root = not self._register
+
         key = self.to_tuple()
-        orig = self.register.get(key, None)
+        orig = self._register.get(key, None)
         if orig is None:
             runner, timestamp = producer()
             task = Task(task_factory=self.task_factory, key=self.key, runner=runner, timestamp=timestamp)
-            self.register[key] = task
+            self._register[key] = task
         else:
             task = Task(task_factory=self.task_factory, key=self.key, runner=orig.runner, timestamp=orig.timestamp)
+
+        if is_root:
+            self._register.clear()
         return task
 
 
@@ -149,7 +153,7 @@ class DummyTask(Generic[R]):
 class Task(DummyTask[R]):
     """ Runner with cache """
     runner: Runner[R]
-    timestamp: datetime | None
+    timestamp: datetime | None  # NOTE: separate to Graph?
 
     def set_result(self) -> None:
         db = self.task_factory.db
@@ -160,13 +164,10 @@ class Task(DummyTask[R]):
         return self.run_with_info(executor=executor)[0]
 
     def run_with_info(self, *, executor: Executor | None = None, dump_generations: bool = False) -> tuple[R, dict[str, Any]]:
-        # graph = Graph.build(self)
-        DummyTask.register.clear()
         graph = Graph.build_from(self)
         graph.prune()
         if executor is None:
             executor = ProcessPoolExecutor()
-        # info = run_task_graph(graph=graph, executor=executor, dump_generations=dump_generations)
         info = run_task_graph(graph=graph, executor=executor, dump_generations=dump_generations)
         return self.get_result(), info
 
@@ -176,12 +177,12 @@ class TaskFactory(Generic[P, R]):
     runner_factory: RunnerFactory[P, R]
     db: Database
     max_concurrency: int | None
+    is_building_graph: ClassVar[bool] = False
 
     def get_db_path(self) -> str:
         return self.db.path
 
     def clear(self) -> None:
-        DummyTask.register.clear()
         self.db.clear()
 
     def __call__(self, *args: P.args, **kwargs: P.kwargs) -> Task[R]:
@@ -361,8 +362,6 @@ class Graph:
                 ps = get_precedents(x)
                 predecessors[key] = set(p.to_tuple() for p in ps)
                 to_expand.extend(zip(ps, repeat(key)))
-            else:
-                pass # Already seen x, skip registration/expansion
 
         return Graph(nodes=nodes, succs=dict(successors), preds=predecessors)
 
@@ -384,7 +383,7 @@ class Graph:
         for key, ts0 in fresh_timestamps.items():
             if ts0 is not None:
                 pruned.append(self.nodes[key])
-                self.pop_and_new_leaves(key, disallow_non_leaf=False)
+                self.pop_with_new_leaves(key, disallow_non_leaf=False)
         return pruned
 
     def __len__(self) -> int:
@@ -407,7 +406,7 @@ class Graph:
                 leaves[path].append((path, args))
         return leaves
 
-    def pop_and_new_leaves(self, key: TaskKey, disallow_non_leaf: bool = True) -> defaultdict[str, list[TaskKey]]:
+    def pop_with_new_leaves(self, key: TaskKey, disallow_non_leaf: bool = True) -> defaultdict[str, list[TaskKey]]:
         if disallow_non_leaf:
             assert not self.preds[key]
         self.nodes.pop(key)
@@ -448,7 +447,6 @@ def run_task_graph(graph: Graph, executor: Executor, dump_generations: bool = Fa
     in_process: set[Future[TaskKey]] = set()
     with executor as executor:
         # TODO: Coffman-Graham algorithm?
-        # TODO: limit in_process <= max_workers
         while standby or in_process:
             # Log some stats
             LOGGER.info(
@@ -488,7 +486,7 @@ def run_task_graph(graph: Graph, executor: Executor, dump_generations: bool = Fa
                     assert occupied[path] >= 0
 
                 # Remove node from graph
-                new_leaves = g.pop_and_new_leaves(done_task)
+                new_leaves = g.pop_with_new_leaves(done_task)
 
                 # Update standby
                 for k, ls in new_leaves.items():
