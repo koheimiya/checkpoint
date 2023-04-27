@@ -1,13 +1,13 @@
 from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Callable, Generic, NewType, TypeVar, Any, cast, overload
+from typing import Callable, Generic, NewType, Type, TypeVar, Any, cast, overload
 from typing_extensions import ParamSpec, Concatenate, Self
 import os
 from pathlib import Path
 
 import logging
-import dill
+import cloudpickle
 import zlib
 import diskcache as dc
 
@@ -30,16 +30,21 @@ Json = NewType('Json', str)
 K = TypeVar('K')
 T = TypeVar('T')
 P = ParamSpec('P')
-R = TypeVar('R')
+R = TypeVar('R', covariant=True)
 D = TypeVar('D')
 
 
-@dataclass
+Serializer = tuple[Callable[[Any], bytes], Callable[[bytes], Any]]
+DEFAULT_SERIALIZER: Serializer = (cloudpickle.dumps, cloudpickle.loads)
+
+
+@dataclass(frozen=True)
 class Database(Generic[T, D]):
     path: str
     compress_level: int
     result_cache: dc.Cache
     timestamp_cache: dc.Cache
+    serializer: Serializer = DEFAULT_SERIALIZER
 
     @classmethod
     def make(cls, path: str, compress_level: int) -> Self:
@@ -50,11 +55,17 @@ class Database(Generic[T, D]):
                 timestamp_cache=dc.Cache(path + '/timestamp'),
                 )
 
+    def _dumps(self, obj: Any) -> bytes:
+        dumps, _ = self.serializer
+        return zlib.compress(dumps(obj), level=self.compress_level)
+
+    def _loads(self, data: bytes) -> Any:
+        _, loads = self.serializer
+        return loads(zlib.decompress(data))
+
     def save(self, key: Json, obj: T) -> datetime:
-        data = dill.dumps(obj, protocol=dill.HIGHEST_PROTOCOL, byref=True)
-        data = zlib.compress(data, level=self.compress_level)
         with self.result_cache as ref:
-            ref[key] = data
+            ref[key] = self._dumps(obj)
 
         timestamp = datetime.now()
         with self.timestamp_cache as ref:
@@ -64,7 +75,7 @@ class Database(Generic[T, D]):
     def load(self, key: Json) -> T:
         with self.result_cache as ref:
             data = ref[key]
-        return dill.loads(zlib.decompress(data))
+        return self._loads(data)
 
     def load_timestamp(self, key: Json) -> datetime:
         with self.timestamp_cache as ref:
@@ -92,15 +103,15 @@ class Database(Generic[T, D]):
                 del ref[key]
 
 
-Runner = Callable[[], T]  # Delayed computation
+Runner = Callable[[], R]  # Delayed computation
 RunnerFactory = Callable[P, Runner[R]]
 
 
 @dataclass(frozen=True)
-class Task(Generic[T]):
+class Task(Generic[R]):
     """ Runner with cache """
-    runner: Runner[T]
-    task_factory: TaskFactory[..., T]
+    runner: Runner[R]
+    task_factory: TaskFactory[..., R]
     key: Json
     timestamp: datetime | None
 
@@ -109,14 +120,14 @@ class Task(Generic[T]):
         out = self.runner()
         db.save(self.key, out)
 
-    def get_result(self) -> T:
+    def get_result(self) -> R:
         db = self.task_factory.db
         return db.load(self.key)
 
-    def run(self, *, executor: Executor | None = None) -> T:
+    def run(self, *, executor: Executor | None = None) -> R:
         return self.run_with_info(executor=executor)[0]
 
-    def run_with_info(self, *, executor: Executor | None = None) -> tuple[T, dict[str, Any]]:
+    def run_with_info(self, *, executor: Executor | None = None) -> tuple[R, dict[str, Any]]:
         graph = Graph.build(self)
         if executor is None:
             executor = ProcessPoolExecutor()
@@ -129,9 +140,6 @@ class Task(Generic[T]):
 
     def to_tuple(self) -> tuple[str, Json]:
         return self.task_factory.get_db_path(), self.key
-
-
-AnyTask = Task[Any]
 
 
 @dataclass
@@ -197,7 +205,9 @@ def _serialize_arguments(fn: Callable[P, Any], *args: P.args, **kwargs: P.kwargs
     return cast(Json, json.dumps(arguments))
 
 
+AnyTask = Task[Any]
 Connector = Callable[[Callable[Concatenate[T, P], R]], Callable[P, R]]  # Takes (T, *P) -> R and return P -> R
+
 
 @overload
 def requires(task: Task[T]) -> Connector[T, P, R]: ...
@@ -215,7 +225,6 @@ def requires(task: AnyTask | list[AnyTask] | dict[Any, AnyTask]) -> Any:
         return requires_dict(task)
     else:
         raise TypeError(task)
-
 
 
 @dataclass(eq=True, frozen=True)
@@ -327,13 +336,6 @@ def walk_subgraph_to_update(graph: Graph) -> list[Graph]:
     return out
 
 
-def _run_task(task_data: bytes) -> tuple[str, Json]:
-    task = dill.loads(task_data)
-    assert isinstance(task, Task)
-    task.set_result()
-    return task.to_tuple()
-
-
 def run_task_graph(graph: Graph, executor: Executor) -> dict[str, Any]:
     """ Consume task graph concurrently.
     """
@@ -412,7 +414,7 @@ def run_task_graph(graph: Graph, executor: Executor) -> dict[str, Any]:
                     to_submit = keys
 
                 for key in to_submit:
-                    future = executor.submit(_run_task, dill.dumps(nodes[path, key], protocol=dill.HIGHEST_PROTOCOL, byref=True))
+                    future = executor.submit(_run_task, cloudpickle.dumps(nodes[path, key]))
                     in_process.add(future)
 
             # Wait for the first tasks to complete
@@ -445,8 +447,14 @@ def run_task_graph(graph: Graph, executor: Executor) -> dict[str, Any]:
                         else:
                             leaves[path_next].append(key_next)
 
-    # Confirm the graph is empty
-    assert not descendants, 'Something went wrong'
-    assert not precedents, 'Something went wrong'
-    assert all(n == 0 for n in occupied.values()), 'Something went wrong'
+    # Sanity check
+    assert not nodes and not descendants and not precedents, f'Graph is not empty. Should not happen.'
+    assert all(n == 0 for n in occupied.values()), 'Incorrect task count. Should not happen.'
     return {'stats': stats}
+
+
+def _run_task(task_data: bytes) -> tuple[str, Json]:
+    task = cloudpickle.loads(task_data)
+    assert isinstance(task, Task)
+    task.set_result()
+    return task.to_tuple()
