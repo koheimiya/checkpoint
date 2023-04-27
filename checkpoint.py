@@ -202,7 +202,7 @@ def _normalize_arguments(fn: Callable[P, Any], *args: P.args, **kwargs: P.kwargs
 
 def _serialize_arguments(fn: Callable[P, Any], *args: P.args, **kwargs: P.kwargs) -> Json:
     arguments = _normalize_arguments(fn, *args, **kwargs)
-    return cast(Json, json.dumps(arguments))
+    return cast(Json, json.dumps(arguments, separators=(',', ':'), sort_keys=True))
 
 
 AnyTask = Task[Any]

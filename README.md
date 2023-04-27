@@ -39,7 +39,7 @@ def choose(n: int, k: int):
 # Build the task graph to compute `choose(6, 3)`
 # and greedily consume it with `concurrent.futures.ProcessPoolExecutor`
 # (i.e., as parallel as possible).
-# The cache is stored at `$CP_CACHE_DIR/checkpoint/{module_name}.{function_name}/...`
+# The cache is stored at `{$CP_CACHE_DIR:-./.cache}/checkpoint/{module_name}.{function_name}/...`
 # and reused whenever available.
 ans = choose(6, 3).run()
 ```
@@ -54,7 +54,7 @@ choose(3, 3).clear()
 ans = choose(6, 3).run()
 
 # Delete all the cache associated with `choose`,
-# equivalent to `rm -r $CP_CACHE_DIR/checkpoint/{module_name}.choose`.
+# equivalent to `rm -r {$CP_CACHE_DIR:-./.cache}/checkpoint/{module_name}.choose`.
 choose.clear()            
 ```
 
