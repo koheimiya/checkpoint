@@ -4,7 +4,6 @@ from checkpoint import task, requires
 
 @task(max_concurrency=1)
 def choose(n: int, k: int):
-
     if 0 < k < n:
         @requires([choose(n - 1, k - 1), choose(n - 1, k)])
         def run_task(prev_two: list[int]):

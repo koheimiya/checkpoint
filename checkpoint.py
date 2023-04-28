@@ -1,32 +1,33 @@
+""" A lightweight workflow management tool.
+
+TODO:
+    - Priority-based scheduling
+"""
 from __future__ import annotations
+from typing import Callable, ClassVar, Generic, NewType, TypeVar, Any, cast, overload
+from typing_extensions import ParamSpec, Concatenate, Self
 from collections import defaultdict
-from itertools import repeat
 from dataclasses import dataclass
 from datetime import datetime
-from re import A
-from typing import Callable, ClassVar, Generic, Iterable, NewType, TypeVar, Any, cast, overload
-from typing_extensions import ParamSpec, Concatenate, Self
-from graphlib import TopologicalSorter
-import os
 from pathlib import Path
-
+from concurrent.futures import ProcessPoolExecutor, Future, wait, FIRST_COMPLETED, Executor
+from functools import wraps
+import os
 import logging
+import inspect
+import json
+
 import cloudpickle
 import zlib
 import diskcache as dc
 import networkx as nx
-
-from concurrent.futures import ProcessPoolExecutor, Future, wait, FIRST_COMPLETED, Executor
-from functools import wraps
-import inspect
-import json
 
 
 CHECKPOINT_PATH = Path(os.getenv('CP_CACHE_DIR', './.cache')) / 'checkpoint'
 CHECKPOINT_PATH.mkdir(parents=True, exist_ok=True)
 
 
-LOGGER = logging.getLogger(__file__)
+LOGGER = logging.getLogger(__name__)
 
 
 Json = NewType('Json', str)
@@ -45,19 +46,20 @@ DEFAULT_SERIALIZER: Serializer = (cloudpickle.dumps, cloudpickle.loads)
 
 @dataclass(frozen=True)
 class Database(Generic[T, D]):
-    path: str
+    name: str
     compress_level: int
     result_cache: dc.Cache
     timestamp_cache: dc.Cache
     serializer: Serializer = DEFAULT_SERIALIZER
 
     @classmethod
-    def make(cls, path: str, compress_level: int) -> Self:
+    def make(cls, name: str, compress_level: int) -> Self:
+        base_path = str(CHECKPOINT_PATH / name)
         return Database(
-                path=path,
+                name=name,
                 compress_level=compress_level,
-                result_cache=dc.Cache(path + '/result'),
-                timestamp_cache=dc.Cache(path + '/timestamp'),
+                result_cache=dc.Cache(base_path + '/result'),
+                timestamp_cache=dc.Cache(base_path + '/timestamp'),
                 )
 
     def _dumps(self, obj: Any) -> bytes:
@@ -121,10 +123,10 @@ class TaskSkeleton(Generic[R]):
     task_factory: TaskFactory[..., R]
     key: Json
 
-    _register: ClassVar[dict[TaskKey, AnyTask]] = dict()
+    _register: ClassVar[dict[TaskKey, Runner[Any]]] = dict()
 
     def to_tuple(self) -> TaskKey:
-        return self.task_factory.get_db_path(), self.key
+        return self.task_factory.get_db_name(), self.key
 
     def get_result(self) -> R:
         db = self.task_factory.db
@@ -144,13 +146,11 @@ class TaskSkeleton(Generic[R]):
         is_root = not self._register
 
         key = self.to_tuple()
-        orig = self._register.get(key, None)
-        if orig is None:
+        runner = self._register.get(key, None)
+        if runner is None:
             runner = loader()
-            task = Task(task_factory=self.task_factory, key=self.key, runner=runner)
-            self._register[key] = task
-        else:
-            task = Task(task_factory=self.task_factory, key=self.key, runner=orig.runner)
+            self._register[key] = runner
+        task = Task(task_factory=self.task_factory, key=self.key, runner=runner)
 
         if is_root:
             self._register.clear()
@@ -185,8 +185,8 @@ class TaskFactory(Generic[P, R]):
     max_concurrency: int | None
     is_building_graph: ClassVar[bool] = False
 
-    def get_db_path(self) -> str:
-        return self.db.path
+    def get_db_name(self) -> str:
+        return self.db.name
 
     def clear(self) -> None:
         self.db.clear()
@@ -215,11 +215,12 @@ def _task(
     """ Convert a runner factory into a task factory. """
 
     def decorator(fn: RunnerFactory[P, R]) -> TaskFactory[P, R]:
-        db_path = str(CHECKPOINT_PATH / _serialize_function(fn))
-        db = Database.make(path=db_path, compress_level=compress_level)
-        return wraps(fn)(
-                TaskFactory(runner_factory=fn, db=db, max_concurrency=max_concurrency)
-                )
+        name = _serialize_function(fn)
+        db = Database.make(name=name, compress_level=compress_level)
+        return wraps(fn)(TaskFactory(
+            runner_factory=fn, db=db,
+            max_concurrency=max_concurrency
+            ))
     return decorator
 
 
@@ -428,9 +429,7 @@ def _group_nodes_by_db(tasks: list[TaskKey]) -> dict[str, list[TaskKey]]:
 def run_task_graph(graph: TaskGraph, executor: Executor, dump_generations: bool = False) -> dict[str, Any]:
     """ Consume task graph concurrently.
     """
-    grouped_nodes = graph.get_grouped_nodes()
-
-    stats = {k: len(args) for k, args in grouped_nodes.items()}
+    stats = {k: len(args) for k, args in graph.get_grouped_nodes().items()}
     LOGGER.info(f'Following tasks will be called: {stats}')
     info = {'stats': stats, 'generations': []}
 
@@ -447,11 +446,12 @@ def run_task_graph(graph: TaskGraph, executor: Executor, dump_generations: bool 
     standby = _group_nodes_by_db(graph.get_initial_tasks())
     in_process: set[Future[TaskKey]] = set()
     with executor as executor:
-        # TODO: Coffman-Graham algorithm?
         while standby or in_process:
             # Log some stats
             LOGGER.info(
-                    f'nodes: {graph.size}, standby: {len(standby)}, in_process: {len(in_process)}'
+                    f'nodes: {graph.size}, '
+                    f'standby: {len(standby)}, '
+                    f'in_process: {len(in_process)}'
                     )
             if dump_generations:
                 info['generations'].append(graph.get_grouped_nodes())
