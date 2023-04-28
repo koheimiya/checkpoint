@@ -172,8 +172,6 @@ class Task(TaskSkeleton[R]):
 
     def run_with_info(self, *, executor: Executor | None = None, dump_generations: bool = False) -> tuple[R, dict[str, Any]]:
         graph = TaskGraph.build_from(self)
-        graph.mark_fresh_nodes()
-        graph.remove_fresh_nodes()
         if executor is None:
             executor = ProcessPoolExecutor()
         info = run_task_graph(graph=graph, executor=executor, dump_generations=dump_generations)
@@ -352,7 +350,9 @@ class TaskGraph:
                 to_expand.extend(prerequisite_tasks)
                 G.add_node(x, task=task, timestamp=task.peek_timestamp())
                 G.add_edges_from([(p.to_tuple(), x) for p in prerequisite_tasks])
-        return TaskGraph(G)
+        out = TaskGraph(G)
+        out.trim()
+        return out
 
     @property
     def size(self) -> int:
@@ -361,7 +361,12 @@ class TaskGraph:
     def get_task(self, key: TaskKey) -> AnyTask:
         return self.G.nodes[key]['task']
 
-    def mark_fresh_nodes(self) -> None:
+    def trim(self) -> None:
+        self._mark_fresh_nodes()
+        self._remove_fresh_nodes()
+        self._transitive_reduction()
+
+    def _mark_fresh_nodes(self) -> None:
         for x in nx.topological_sort(self.G):
             ts0 = self.G.nodes[x]['timestamp']
             if ts0 is None:
@@ -376,10 +381,15 @@ class TaskGraph:
             else:
                 self.G.add_node(x, fresh=True)
 
-    def remove_fresh_nodes(self) -> None:
+    def _remove_fresh_nodes(self) -> None:
         to_remove = [x for x, attr in self.G.nodes.items() if attr['fresh']]
         for x in to_remove:
             self.G.remove_node(x)
+
+    def _transitive_reduction(self) -> None:
+        TR = nx.transitive_reduction(self.G)
+        TR.add_nodes_from(self.G.nodes(data=True))
+        self.G = TR
 
     def get_task_factories(self) -> dict[str, TaskFactory[..., Any]]:
         return dict((path, attr['task'].task_factory) for (path, _), attr in self.G.nodes.items())
