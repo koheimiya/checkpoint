@@ -3,7 +3,8 @@ from collections import defaultdict
 from itertools import repeat
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Callable, ClassVar, Generic, NewType, TypeVar, Any, cast, overload
+from re import A
+from typing import Callable, ClassVar, Generic, Iterable, NewType, TypeVar, Any, cast, overload
 from typing_extensions import ParamSpec, Concatenate, Self
 from graphlib import TopologicalSorter
 import os
@@ -13,6 +14,7 @@ import logging
 import cloudpickle
 import zlib
 import diskcache as dc
+import networkx as nx
 
 from concurrent.futures import ProcessPoolExecutor, Future, wait, FIRST_COMPLETED, Executor
 from functools import wraps
@@ -115,7 +117,7 @@ TaskKey = tuple[str, Json]
 
 
 @dataclass(frozen=True)
-class DummyTask(Generic[R]):
+class TaskSkeleton(Generic[R]):
     task_factory: TaskFactory[..., R]
     key: Json
 
@@ -132,17 +134,23 @@ class DummyTask(Generic[R]):
         db = self.task_factory.db
         db.delete(self.key)
 
-    def create_task(self, producer: Callable[[], tuple[Runner[R], datetime | None]]) -> Task[R]:
+    def peek_timestamp(self) -> datetime | None:
+        try:
+            return self.task_factory.db.load_timestamp(self.key)
+        except KeyError:
+            return None
+
+    def load_content(self, loader: RunnerFactory[[], R]) -> Task[R]:
         is_root = not self._register
 
         key = self.to_tuple()
         orig = self._register.get(key, None)
         if orig is None:
-            runner, timestamp = producer()
-            task = Task(task_factory=self.task_factory, key=self.key, runner=runner, timestamp=timestamp)
+            runner = loader()
+            task = Task(task_factory=self.task_factory, key=self.key, runner=runner)
             self._register[key] = task
         else:
-            task = Task(task_factory=self.task_factory, key=self.key, runner=orig.runner, timestamp=orig.timestamp)
+            task = Task(task_factory=self.task_factory, key=self.key, runner=orig.runner)
 
         if is_root:
             self._register.clear()
@@ -150,10 +158,9 @@ class DummyTask(Generic[R]):
 
 
 @dataclass(frozen=True)
-class Task(DummyTask[R]):
+class Task(TaskSkeleton[R]):
     """ Runner with cache """
     runner: Runner[R]
-    timestamp: datetime | None  # NOTE: separate to Graph?
 
     def set_result(self) -> None:
         db = self.task_factory.db
@@ -164,8 +171,9 @@ class Task(DummyTask[R]):
         return self.run_with_info(executor=executor)[0]
 
     def run_with_info(self, *, executor: Executor | None = None, dump_generations: bool = False) -> tuple[R, dict[str, Any]]:
-        graph = Graph.build_from(self)
-        graph.prune()
+        graph = TaskGraph.build_from(self)
+        graph.mark_fresh_nodes()
+        graph.remove_fresh_nodes()
         if executor is None:
             executor = ProcessPoolExecutor()
         info = run_task_graph(graph=graph, executor=executor, dump_generations=dump_generations)
@@ -187,17 +195,8 @@ class TaskFactory(Generic[P, R]):
 
     def __call__(self, *args: P.args, **kwargs: P.kwargs) -> Task[R]:
         key = _serialize_arguments(self.runner_factory, *args, **kwargs)
-        dummy = DummyTask(task_factory=self, key=key)
-
-        def producer():
-            runner = self.runner_factory(*args, **kwargs)
-            try:
-                timestamp = self.db.load_timestamp(key)
-            except KeyError:
-                timestamp = None
-            return runner, timestamp
-
-        return dummy.create_task(producer=producer)
+        dummy = TaskSkeleton(task_factory=self, key=key)
+        return dummy.load_content(loader=lambda: self.runner_factory(*args, **kwargs))
 
 
 @overload
@@ -326,7 +325,7 @@ def requires_dict(tasks: dict[K, Task[T]]) -> Connector[dict[K, T], P, R]:
     return decorator
 
 
-def get_precedents(task: AnyTask) -> list[AnyTask]:
+def get_prerequisite_tasks(task: AnyTask) -> list[AnyTask]:
     deps: list[Task[Any]] = []
     task_fn = task.runner
     while isinstance(task_fn, (Connected, ListConnected, DictConnected)):
@@ -336,124 +335,116 @@ def get_precedents(task: AnyTask) -> list[AnyTask]:
 
 
 @dataclass
-class Graph:
-    nodes: dict[TaskKey, AnyTask]
-    succs: dict[TaskKey, set[TaskKey]]
-    preds: dict[TaskKey, set[TaskKey]]
+class TaskGraph:
+    G: nx.DiGraph
 
     @classmethod
     def build_from(cls, root: AnyTask) -> Self:
-        nodes: dict[TaskKey, AnyTask] = {}
-        successors: dict[TaskKey, set[TaskKey]] = defaultdict(set)
-        predecessors: dict[TaskKey, set[TaskKey]] = {}
-
-        to_expand: list[tuple[AnyTask, TaskKey | None]] = [(root, None)]
+        G = nx.DiGraph()
+        seen: set[TaskKey] = set()
+        to_expand = [root]
         while to_expand:
-            x, desc_key = to_expand.pop()
-            key = x.to_tuple()
+            task = to_expand.pop()
+            x = task.to_tuple()
+            if x not in seen:
+                seen.add(x)
+                prerequisite_tasks = get_prerequisite_tasks(task)
+                to_expand.extend(prerequisite_tasks)
+                G.add_node(x, task=task, timestamp=task.peek_timestamp())
+                G.add_edges_from([(p.to_tuple(), x) for p in prerequisite_tasks])
+        return TaskGraph(G)
 
-            if desc_key is None:
-                successors[key] = set()
+    @property
+    def size(self) -> int:
+        return len(self.G)
+
+    def get_task(self, key: TaskKey) -> AnyTask:
+        return self.G.nodes[key]['task']
+
+    def mark_fresh_nodes(self) -> None:
+        for x in nx.topological_sort(self.G):
+            ts0 = self.G.nodes[x]['timestamp']
+            if ts0 is None:
+                self.G.add_node(x, fresh=False)
+                continue
+            for y in self.G.predecessors(x):
+                fresh_y = self.G.nodes[y]['fresh']
+                ts = self.G.nodes[y]['timestamp']
+                if not fresh_y or ts is None or ts > ts0:
+                    self.G.add_node(x, fresh=False)
+                    break
             else:
-                successors[key].add(desc_key)
+                self.G.add_node(x, fresh=True)
 
-            if key not in predecessors:
-                nodes[key] = x
-                ps = get_precedents(x)
-                predecessors[key] = set(p.to_tuple() for p in ps)
-                to_expand.extend(zip(ps, repeat(key)))
-
-        return Graph(nodes=nodes, succs=dict(successors), preds=predecessors)
-
-    def prune(self) -> list[AnyTask]:
-        """ Prune fresh tasks and return pruned tasks """
-        topological_order = tuple(TopologicalSorter(self.succs).static_order())[::-1]
-        fresh_timestamps: dict[TaskKey, datetime | None] = {}
-        for key in topological_order:
-            ts0 = self.nodes[key].timestamp
-            if ts0 is not None:
-                for p in self.preds[key]:
-                    ts_pred = fresh_timestamps[p]
-                    if ts_pred is None or ts_pred > ts0:
-                        ts0 = None
-                        break
-            fresh_timestamps[key] = ts0
-
-        pruned: list[AnyTask] = []
-        for key, ts0 in fresh_timestamps.items():
-            if ts0 is not None:
-                pruned.append(self.nodes[key])
-                self.pop_with_new_leaves(key, disallow_non_leaf=False)
-        return pruned
-
-    def __len__(self) -> int:
-        assert len(self.nodes) == len(self.succs) == len(self.preds)
-        return len(self.nodes)
+    def remove_fresh_nodes(self) -> None:
+        to_remove = [x for x, attr in self.G.nodes.items() if attr['fresh']]
+        for x in to_remove:
+            self.G.remove_node(x)
 
     def get_task_factories(self) -> dict[str, TaskFactory[..., Any]]:
-        return dict((path, task.task_factory) for (path, _), task in self.nodes.items())
+        return dict((path, attr['task'].task_factory) for (path, _), attr in self.G.nodes.items())
 
-    def grouped_keys(self) -> dict[str, list[Json]]:
+    def get_initial_tasks(self) -> list[TaskKey]:
+        return [x for x in self.G if self.G.in_degree(x) == 0]
+
+    def pop_with_new_leaves(self, x: TaskKey, disallow_non_leaf: bool = True) -> list[TaskKey]:
+        if disallow_non_leaf:
+            assert not list(self.G.predecessors(x))
+
+        new_leaves: list[TaskKey] = []
+        for y in self.G.successors(x):
+            if self.G.in_degree(y) == 1:
+                new_leaves.append(y)
+
+        self.G.remove_node(x)
+        return new_leaves
+
+    def get_grouped_nodes(self) -> dict[str, list[Json]]:
         out: dict[str, list[Json]] = defaultdict(list)
-        for path, args in self.nodes:
+        for x in self.G:
+            path, args = x
             out[path].append(args)
         return dict(out)
 
-    def get_leaves(self) -> defaultdict[str, list[TaskKey]]:
-        leaves: dict[str, list[TaskKey]] = defaultdict(list)
-        for (path, args), ps in self.preds.items():
-            if not ps:
-                leaves[path].append((path, args))
-        return leaves
 
-    def pop_with_new_leaves(self, key: TaskKey, disallow_non_leaf: bool = True) -> defaultdict[str, list[TaskKey]]:
-        if disallow_non_leaf:
-            assert not self.preds[key]
-        self.nodes.pop(key)
-        self.preds.pop(key)
-        ss = self.succs.pop(key)
-
-        new_leaves: dict[str, list[TaskKey]] = defaultdict(list)
-        for next_task in ss:
-            ps = self.preds[next_task]
-            ps.remove(key)
-            if not ps:
-                path_next = next_task[0]
-                new_leaves[path_next].append(next_task)
-        return new_leaves
+def _group_nodes_by_db(tasks: list[TaskKey]) -> dict[str, list[TaskKey]]:
+    out = defaultdict(list)
+    for x in tasks:
+        db, _ = x
+        out[db].append(x)
+    return dict(out)
 
 
-def run_task_graph(graph: Graph, executor: Executor, dump_generations: bool = False) -> dict[str, Any]:
+def run_task_graph(graph: TaskGraph, executor: Executor, dump_generations: bool = False) -> dict[str, Any]:
     """ Consume task graph concurrently.
     """
-    g = graph
-    grouped_keys = g.grouped_keys()
+    grouped_nodes = graph.get_grouped_nodes()
 
-    stats = {k: len(args) for k, args in grouped_keys.items()}
+    stats = {k: len(args) for k, args in grouped_nodes.items()}
     LOGGER.info(f'Following tasks will be called: {stats}')
     info = {'stats': stats, 'generations': []}
 
     # Read concurrency budgets
     budgets: dict[str, int] = {}
     occupied: dict[str, int] = {}
-    for path, fac in g.get_task_factories().items():
+    for path, fac in graph.get_task_factories().items():
         mc = fac.max_concurrency
         if mc is not None:
             budgets[path] = mc
             occupied[path] = 0
 
     # Execute tasks
-    standby = g.get_leaves()
+    standby = _group_nodes_by_db(graph.get_initial_tasks())
     in_process: set[Future[TaskKey]] = set()
     with executor as executor:
         # TODO: Coffman-Graham algorithm?
         while standby or in_process:
             # Log some stats
             LOGGER.info(
-                    f'nodes: {len(g.nodes)}, desc: {len(g.succs)}, prec: {len(g.preds)}, standby: {len(standby)}, in_process: {len(in_process)}'
+                    f'nodes: {graph.size}, standby: {len(standby)}, in_process: {len(in_process)}'
                     )
             if dump_generations:
-                info['generations'].append(g.grouped_keys())
+                info['generations'].append(graph.get_grouped_nodes())
 
             # Submit all leaf tasks
             leftover: dict[str, list[TaskKey]] = {}
@@ -468,7 +459,7 @@ def run_task_graph(graph: Graph, executor: Executor, dump_generations: bool = Fa
                     to_submit = keys
 
                 for key in to_submit:
-                    future = executor.submit(_run_task, cloudpickle.dumps(g.nodes[key]))
+                    future = executor.submit(_run_task, cloudpickle.dumps(graph.get_task(key)))
                     in_process.add(future)
 
             # Wait for the first tasks to complete
@@ -477,23 +468,23 @@ def run_task_graph(graph: Graph, executor: Executor, dump_generations: bool = Fa
             # Update graph
             standby = defaultdict(list, leftover)
             for done_future in done:
-                done_task = done_future.result()
+                x_done = done_future.result()
 
                 # Update occupied
-                path = done_task[0]
+                path = x_done[0]
                 if path in occupied:
                     occupied[path] -= 1
                     assert occupied[path] >= 0
 
                 # Remove node from graph
-                new_leaves = g.pop_with_new_leaves(done_task)
+                ys = graph.pop_with_new_leaves(x_done)
 
                 # Update standby
-                for k, ls in new_leaves.items():
-                    standby[k].extend(ls)
+                for y in ys:
+                    standby[y[0]].append(y)
 
     # Sanity check
-    assert len(g) == 0, f'Graph is not empty. Should not happen.'
+    assert graph.size == 0, f'Graph is not empty. Should not happen.'
     assert all(n == 0 for n in occupied.values()), 'Incorrect task count. Should not happen.'
     return info
 

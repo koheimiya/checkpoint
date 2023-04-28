@@ -1,7 +1,7 @@
 # Checkpoint-tool
 A lightweight workflow management tool written in pure Python.
 
-Internally, it depends on `DiskCache`, `cloudpickle` and `concurrent.futures`.
+Internally, it depends on `DiskCache`, `cloudpickle` `networkx` and `concurrent.futures`.
 
 
 ### Installation
