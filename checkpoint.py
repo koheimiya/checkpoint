@@ -1,6 +1,22 @@
-""" A lightweight workflow management tool.
+""" A lightweight workflow management tool written in pure Python.
 
 TODO:
+    - Special directives
+        - @requires_datadir: give a path to the data directory unique to each task factory.
+        - @requires_argid: give a unique serialization of the current task arguments.
+            Usage:
+                ```python
+                @requires('datadir')
+                @requires('argid')
+                def foo(datadir, argid):
+                    ...
+                    path = f'{datadir}/{argid}.model.bin'
+                    model.save(path)
+                    return path
+                ```
+        - @entrypoint: set the root directory of cache next to the file containing the decorated task.
+            Usage: `python -m checkpoint main.py`
+            -> Run the entrypoint task contained in main.py with cache located at ./.cache/main/{module_name}.{function_name}/...
     - Priority-based scheduling
 """
 from __future__ import annotations
