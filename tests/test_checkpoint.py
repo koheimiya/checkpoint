@@ -1,6 +1,7 @@
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from pdb import run
+from typing import Any
 import pytest
 from checkpoint import requires_directory, task, requires
 
@@ -140,3 +141,26 @@ def test_requires_directory():
     assert not taskdir.exists()             # task directory deleted
     assert peek_content().run() == 'hello'  # files recreated
 
+
+@task
+def count_elem(x: list | dict):
+    def __() -> int:
+        return len(x)
+    return __
+
+
+@task
+def summarize_param(**params: Any):
+    container_keys = [k for k in params if isinstance(params[k], (list, dict))]
+
+    @requires({k: count_elem(params[k]) for k in container_keys})
+    def __(stats: dict[str, int]) -> dict[str, int | None]:
+        out: dict[str, int | None] = dict(stats)
+        out.update({k: None for k in params if k not in container_keys})
+        return out
+    return __
+
+
+def test_json_param():
+    res = summarize_param(x=[1, 2], y=dict(zip(range(3), 'abc')), z=42).run()
+    assert res == {'x': 2, 'y': 3, 'z': None}
