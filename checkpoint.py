@@ -2,16 +2,6 @@
 
 TODO:
     - Special directives
-        - @requires_directory: give a path to the data directory unique to each task.
-            Usage:
-                ```python
-                @requires_directory
-                def run_task(path):
-                    ...
-                    model_path = str(path / 'model.bin')
-                    model.save(model_path)
-                    return model_path
-                ```
         - @entrypoint: set the root directory of cache next to the file containing the decorated task.
             Usage: `python -m checkpoint main.py`
             -> Run the entrypoint task contained in main.py with cache located at ./.cache/main/{module_name}.{function_name}/...
@@ -31,6 +21,7 @@ import logging
 import inspect
 import json
 import base64
+import shutil
 
 import cloudpickle
 import zlib
@@ -61,6 +52,12 @@ DEFAULT_SERIALIZER: Serializer = (cloudpickle.dumps, cloudpickle.loads)
 
 @dataclass(frozen=True)
 class Database(Generic[T, D]):
+    """ Manage the cache of tasks.
+    Layout:
+    CHECKPOINT_PATH / name / result     # return values
+    CHECKPOINT_PATH / name / timestamp  # timestamps
+    CHECKPOINT_PATH / name / data       # other data created by tasks
+    """
     name: str
     base_path: str
     compress_level: int
@@ -79,8 +76,11 @@ class Database(Generic[T, D]):
                 timestamp_cache=dc.Cache(base_path + '/timestamp'),
                 )
 
+    def __post_init__(self) -> None:
+        self.data_directory.mkdir(exist_ok=True)
+
     @property
-    def datadir(self) -> Path:
+    def data_directory(self) -> Path:
         return Path(self.base_path) / 'data'
 
     def _dumps(self, obj: Any) -> bytes:
@@ -125,6 +125,9 @@ class Database(Generic[T, D]):
     def clear(self) -> None:
         for cache in self._get_caches():
             cache.clear()
+        if self.data_directory.exists():
+            shutil.rmtree(self.data_directory)
+        self.data_directory.mkdir()
 
     def delete(self, key: Json) -> None:
         for cache in self._get_caches():
@@ -149,19 +152,30 @@ class TaskSkeleton(Generic[R]):
     def to_tuple(self) -> TaskKey:
         return self.task_factory.get_db_name(), self.key
 
-    def get_result(self) -> R:
-        db = self.task_factory.db
-        return db.load(self.key)
+    @property
+    def arg_id(self) -> str:
+        _, arg_str = self.to_tuple()
+        return base64.urlsafe_b64encode(arg_str.encode()).decode().replace('=', '')
+
+    @property
+    def directory(self) -> Path:
+        return Path(self.task_factory.db.data_directory) / self.arg_id
 
     def clear(self) -> None:
         db = self.task_factory.db
         db.delete(self.key)
+        if self.directory.exists():
+            shutil.rmtree(self.directory)
 
     def peek_timestamp(self) -> datetime | None:
         try:
             return self.task_factory.db.load_timestamp(self.key)
         except KeyError:
             return None
+
+    def get_result(self) -> R:
+        db = self.task_factory.db
+        return db.load(self.key)
 
     def load_content(self, loader: RunnerFactory[[], R]) -> Task[R]:
         is_root = not self._register
@@ -187,15 +201,6 @@ class Task(TaskSkeleton[R]):
         db = self.task_factory.db
         out = self.runner()
         db.save(self.key, out)
-
-    @property
-    def arg_id(self) -> str:
-        _, arg_str = self.to_tuple()
-        return base64.urlsafe_b64encode(arg_str.encode()).decode().replace('=', '')
-
-    @property
-    def directory(self) -> Path:
-        return Path(self.task_factory.db.datadir) / self.arg_id
 
     def run(self, *, executor: Executor | None = None) -> R:
         return self.run_with_info(executor=executor)[0]
@@ -360,9 +365,9 @@ class RequiresDirectory(Generic[P, R]):
 
     def __call__(self, *args: P.args, **kwargs: P.kwargs) -> R:
         assert self.directory is not None, 'Directory not set. Bug?'
-        breakpoint()
-        self.directory.rmdir()
-        self.directory.mkdir(parents=True)
+        if self.directory.exists():
+            self.directory.rmdir()
+        self.directory.mkdir()
         return self.fn(self.directory, *args, **kwargs)
 
     def set_directory(self, path: Path) -> None:
@@ -370,6 +375,7 @@ class RequiresDirectory(Generic[P, R]):
 
 
 def requires_directory(fn: Callable[Concatenate[Path, P], R]) -> Callable[P, R]:
+    """ Create fresh directory dedicated to the task """
     return RequiresDirectory(fn)
 
 

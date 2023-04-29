@@ -1,15 +1,20 @@
 # Checkpoint-tool
+
 A lightweight workflow management tool written in pure Python.
 
 Internally, it depends on `DiskCache`, `cloudpickle` `networkx` and `concurrent.futures`.
 
 
-### Installation
+## Installation
+
 ```
 pip install checkpoint-tool
 ```
 
-### Usage
+## Usage
+
+### Basic usage
+
 Create task with decorators:
 ```python
 from checkpoint import task, requires
@@ -44,6 +49,8 @@ def choose(n: int, k: int):
 ans = choose(6, 3).run()
 ```
 
+### Deleting cache
+
 It is possible to selectively discard cache: 
 ```python
 # After some modificaiton of `choose(3, 3)`,
@@ -57,6 +64,8 @@ ans = choose(6, 3).run()
 # equivalent to `rm -r {$CP_CACHE_DIR:-./.cache}/checkpoint/{module_name}.choose`.
 choose.clear()            
 ```
+
+### Advanced IO
 
 More complex inputs can be used as long as it is JSON serializable:
 ```python
@@ -98,6 +107,28 @@ Large outputs can be stored with compression via `zlib`:
 def large_output_task(*args, **kwargs):
     ...
 ```
+
+### Data directories
+
+Use `@requires_directory` decorator to create a fresh directory dedicated to each task. The contents of the directory are cleared at each task call and persist until `clear`ed.
+```python
+from pathlib import Path
+
+@task
+def train_model(...):
+
+    # Passing a new directory at `$CHECKPOINT_PATH/checkpoint/{module_name}.{function_name}/data/{cryptic_task_id}`
+    @requires_directory
+    def run_task(path: Path):
+        ...
+        model_path = str(path / 'model.bin')
+        model.save(model_path)
+        return model_path
+
+    return run_task
+```
+
+### Execution policy configuration
 
 One can control the task execution with `concurrent.futures.Executor` class:
 ```python

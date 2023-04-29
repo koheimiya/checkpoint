@@ -1,3 +1,6 @@
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+from pdb import run
 import pytest
 from checkpoint import requires_directory, task, requires
 
@@ -99,12 +102,41 @@ def test_raise():
 
 
 @task
-def create_fresh_directory():
+def create_file():
     @requires_directory
-    def run_task(path) -> str:
-        return str(path)
+    def run_task(path: Path) -> str:
+        outpath = path / 'test.txt'
+        with open(outpath, 'w') as f:
+            f.write('hello')
+        return str(outpath)
+    return run_task
+
+@task
+def peek_content():
+    @requires(create_file())
+    def run_task(path: str) -> str:
+        with open(path, 'r') as f:
+            return f.read()
     return run_task
 
 
 def test_requires_directory():
-    create_fresh_directory().run()
+    create_file.clear()
+    peek_content.clear()
+    taskdir = peek_content().directory
+    task_factory_dir = peek_content.db.data_directory
+    assert not taskdir.exists()  # task directory not created yet
+
+    assert peek_content().run() == 'hello'
+    peek_content.clear()
+    assert peek_content().run() == 'hello'  # files persist
+
+    create_file.clear()
+    assert not taskdir.exists()                 # task directory deleted
+    assert not any(task_factory_dir.iterdir())  # task factory directory is empty
+    assert peek_content().run() == 'hello'      # files recreated
+
+    create_file().clear()
+    assert not taskdir.exists()             # task directory deleted
+    assert peek_content().run() == 'hello'  # files recreated
+
