@@ -113,6 +113,7 @@ def large_output_task(*args, **kwargs):
 Use `@requires_directory` decorator to create a fresh directory dedicated to each task. The contents of the directory are cleared at each task call and persist until `clear`ed.
 ```python
 from pathlib import Path
+from checkpoint import requires_directory
 
 @task
 def train_model(...):
