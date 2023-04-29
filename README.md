@@ -163,4 +163,4 @@ We can use checkpoint-tool from commandline like `python -m checkpoint path/to/t
 def main():
     ...
 ```
-The command runs the `main` task and stores the cache right next to the `taskfile.py` as `.cache/checkpoint/...`.
+The command runs the `main` task and stores the cache right next to `taskfile.py` as `.cache/checkpoint/...`.
