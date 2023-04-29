@@ -2,17 +2,15 @@
 
 TODO:
     - Special directives
-        - @requires_datadir: give a path to the data directory unique to each task factory.
-        - @requires_argid: give a unique serialization of the current task arguments.
+        - @requires_directory: give a path to the data directory unique to each task.
             Usage:
                 ```python
-                @requires('datadir')
-                @requires('argid')
-                def foo(datadir, argid):
+                @requires_directory
+                def run_task(path):
                     ...
-                    path = f'{datadir}/{argid}.model.bin'
-                    model.save(path)
-                    return path
+                    model_path = str(path / 'model.bin')
+                    model.save(model_path)
+                    return model_path
                 ```
         - @entrypoint: set the root directory of cache next to the file containing the decorated task.
             Usage: `python -m checkpoint main.py`
@@ -20,7 +18,7 @@ TODO:
     - Priority-based scheduling
 """
 from __future__ import annotations
-from typing import Callable, ClassVar, Generic, NewType, TypeVar, Any, cast, overload
+from typing import Callable, ClassVar, Generic, NewType, Protocol, TypeVar, Any, cast, overload
 from typing_extensions import ParamSpec, Concatenate, Self
 from collections import defaultdict
 from dataclasses import dataclass
@@ -32,6 +30,7 @@ import os
 import logging
 import inspect
 import json
+import base64
 
 import cloudpickle
 import zlib
@@ -63,6 +62,7 @@ DEFAULT_SERIALIZER: Serializer = (cloudpickle.dumps, cloudpickle.loads)
 @dataclass(frozen=True)
 class Database(Generic[T, D]):
     name: str
+    base_path: str
     compress_level: int
     result_cache: dc.Cache
     timestamp_cache: dc.Cache
@@ -73,10 +73,15 @@ class Database(Generic[T, D]):
         base_path = str(CHECKPOINT_PATH / name)
         return Database(
                 name=name,
+                base_path=base_path,
                 compress_level=compress_level,
                 result_cache=dc.Cache(base_path + '/result'),
                 timestamp_cache=dc.Cache(base_path + '/timestamp'),
                 )
+
+    @property
+    def datadir(self) -> Path:
+        return Path(self.base_path) / 'data'
 
     def _dumps(self, obj: Any) -> bytes:
         dumps, _ = self.serializer
@@ -183,6 +188,15 @@ class Task(TaskSkeleton[R]):
         out = self.runner()
         db.save(self.key, out)
 
+    @property
+    def arg_id(self) -> str:
+        _, arg_str = self.to_tuple()
+        return base64.urlsafe_b64encode(arg_str.encode()).decode().replace('=', '')
+
+    @property
+    def directory(self) -> Path:
+        return Path(self.task_factory.db.datadir) / self.arg_id
+
     def run(self, *, executor: Executor | None = None) -> R:
         return self.run_with_info(executor=executor)[0]
 
@@ -199,7 +213,6 @@ class TaskFactory(Generic[P, R]):
     runner_factory: RunnerFactory[P, R]
     db: Database
     max_concurrency: int | None
-    is_building_graph: ClassVar[bool] = False
 
     def get_db_name(self) -> str:
         return self.db.name
@@ -277,18 +290,18 @@ def requires(task: AnyTask | list[AnyTask] | dict[Any, AnyTask]) -> Any:
         raise TypeError(task)
 
 
-@dataclass(eq=True, frozen=True)
+@dataclass(frozen=True)
 class Connected(Generic[T, P, R]):
     """ Connect a task to a function. """
-    task: Task[T]
+    pre_task: Task[T]
     fn: Callable[Concatenate[T, P], R]
 
     def __call__(self, *args: P.args, **kwargs: P.kwargs) -> R:
-        x = self.task.get_result()
+        x = self.pre_task.get_result()
         return self.fn(x, *args, **kwargs)
 
-    def get_tasks(self) -> list[AnyTask]:
-        return [self.task]
+    def get_prerequisites(self) -> list[AnyTask]:
+        return [self.pre_task]
 
 
 def requires_single(task: Task[T]) -> Connector[T, P, R]:
@@ -298,18 +311,18 @@ def requires_single(task: Task[T]) -> Connector[T, P, R]:
     return decorator
 
 
-@dataclass(eq=True, frozen=True)
+@dataclass(frozen=True)
 class ListConnected(Generic[T, P, R]):
     """ Connect a list of tasks to a function. """
-    tasks: list[Task[T]]
+    pre_tasks: list[Task[T]]
     fn: Callable[Concatenate[list[T], P], R]
 
     def __call__(self, *args: P.args, **kwargs: P.kwargs) -> R:
-        xs = [task.get_result() for task in self.tasks]
+        xs = [task.get_result() for task in self.pre_tasks]
         return self.fn(xs, *args, **kwargs)
 
-    def get_tasks(self) -> list[AnyTask]:
-        return self.tasks
+    def get_prerequisites(self) -> list[AnyTask]:
+        return self.pre_tasks
 
 
 def requires_list(tasks: list[Task[T]]) -> Connector[list[T], P, R]:
@@ -319,18 +332,18 @@ def requires_list(tasks: list[Task[T]]) -> Connector[list[T], P, R]:
     return decorator
 
 
-@dataclass(eq=True, frozen=True)
+@dataclass(frozen=True)
 class DictConnected(Generic[K, T, P, R]):
     """ Connect a dict of tasks to a function. """
-    tasks: dict[K, Task[T]]
+    pre_tasks: dict[K, Task[T]]
     fn: Callable[Concatenate[dict[K, T], P], R]
 
     def __call__(self, *args: P.args, **kwargs: P.kwargs) -> R:
-        xs = {k: task.get_result() for k, task in self.tasks.items()}
+        xs = {k: task.get_result() for k, task in self.pre_tasks.items()}
         return self.fn(xs, *args, **kwargs)
 
-    def get_tasks(self) -> list[AnyTask]:
-        return list(self.tasks.values())
+    def get_prerequisites(self) -> list[AnyTask]:
+        return list(self.pre_tasks.values())
 
 
 def requires_dict(tasks: dict[K, Task[T]]) -> Connector[dict[K, T], P, R]:
@@ -340,11 +353,34 @@ def requires_dict(tasks: dict[K, Task[T]]) -> Connector[dict[K, T], P, R]:
     return decorator
 
 
+@dataclass
+class RequiresDirectory(Generic[P, R]):
+    fn: Callable[Concatenate[Path, P], R]
+    directory: Path | None = None
+
+    def __call__(self, *args: P.args, **kwargs: P.kwargs) -> R:
+        assert self.directory is not None, 'Directory not set. Bug?'
+        breakpoint()
+        self.directory.rmdir()
+        self.directory.mkdir(parents=True)
+        return self.fn(self.directory, *args, **kwargs)
+
+    def set_directory(self, path: Path) -> None:
+        self.directory = path
+
+
+def requires_directory(fn: Callable[Concatenate[Path, P], R]) -> Callable[P, R]:
+    return RequiresDirectory(fn)
+
+
 def get_prerequisite_tasks(task: AnyTask) -> list[AnyTask]:
     deps: list[Task[Any]] = []
     task_fn = task.runner
-    while isinstance(task_fn, (Connected, ListConnected, DictConnected)):
-        deps.extend(task_fn.get_tasks())
+    while isinstance(task_fn, (Connected, ListConnected, DictConnected, RequiresDirectory)):
+        if isinstance(task_fn, (Connected, ListConnected, DictConnected)):
+            deps.extend(task_fn.get_prerequisites())
+        else:
+            task_fn.set_directory(task.directory)
         task_fn = task_fn.fn
     return deps
 

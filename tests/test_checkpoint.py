@@ -1,5 +1,5 @@
 import pytest
-from checkpoint import task, requires
+from checkpoint import requires_directory, task, requires
 
 
 @task(max_concurrency=1)
@@ -96,3 +96,15 @@ def task_raise():
 def test_raise():
     with pytest.raises(ValueError):
         task_raise().run()
+
+
+@task
+def create_fresh_directory():
+    @requires_directory
+    def run_task(path) -> str:
+        return str(path)
+    return run_task
+
+
+def test_requires_directory():
+    create_fresh_directory().run()
