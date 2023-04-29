@@ -628,7 +628,8 @@ def entrypoint(fn: RunnerFactory[[], None]) -> Callable[[], None]:
 @click.option('-e', '--exec-name', type=click.Choice(['process', 'thread']), default='process')
 @click.option('-n', '--num-workers', type=int, default=-1)
 @click.option('--cache-dir', default=None)
-def main(taskfile: str, exec_name: str, num_workers: int, cache_dir: str | None):
+@click.option('--dont-clear-main', is_flag=True)
+def main(taskfile: str, exec_name: str, num_workers: int, cache_dir: str | None, dont_clear_main: bool):
     # Set arguments as environment variables
     task_path = Path(taskfile)
     os.environ['CP_EXECUTOR'] = exec_name
@@ -645,6 +646,8 @@ def main(taskfile: str, exec_name: str, num_workers: int, cache_dir: str | None)
     spec.loader.exec_module(module)
 
     # Run the main task
+    if not dont_clear_main:
+        module.main.clear()
     module.main().run()
     return 0
 
