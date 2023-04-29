@@ -1,10 +1,6 @@
 """ A lightweight workflow management tool written in pure Python.
 
 TODO:
-    - Special directives
-        - @entrypoint: set the root directory of cache next to the file containing the decorated task.
-            Usage: `python -m checkpoint main.py -e process -n 8 --cache_dir ...`
-            -> Run the entrypoint task contained in main.py with cache located at ./.cache/main/{module_name}.{function_name}/...
     - Priority-based scheduling
 """
 from __future__ import annotations
@@ -20,7 +16,6 @@ from functools import wraps
 import importlib.util
 import os
 import sys
-import subprocess
 import logging
 import inspect
 import json
