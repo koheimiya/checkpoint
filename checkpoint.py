@@ -650,8 +650,7 @@ def main(taskfile: str, exec_name: str, num_workers: int, cache_dir: str | None)
     spec.loader.exec_module(module)
 
     # Run the main task
-    result = module.main().run()
-    print(result)
+    module.main().run()
     return 0
 
 

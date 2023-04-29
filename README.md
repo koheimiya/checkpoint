@@ -153,3 +153,13 @@ One can also control the concurrency at a task level:
 def resource_intensive_task(*args, **kwargs):
     ...
 ```
+
+### Commandline tool
+We can use checkpoint-tool from commandline like `python -m checkpoint path/to/taskfile.py`, where `taskfile.py` defines the `main` task as follows:
+```python
+# taskfile.py
+
+@task
+def main():
+    ...
+```
