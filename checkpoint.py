@@ -3,34 +3,68 @@
 TODO:
     - Special directives
         - @entrypoint: set the root directory of cache next to the file containing the decorated task.
-            Usage: `python -m checkpoint main.py`
+            Usage: `python -m checkpoint main.py -e process -n 8 --cache_dir ...`
             -> Run the entrypoint task contained in main.py with cache located at ./.cache/main/{module_name}.{function_name}/...
     - Priority-based scheduling
 """
 from __future__ import annotations
-from typing import Callable, ClassVar, Generic, NewType, TypeVar, Any, cast, overload
+from contextlib import contextmanager
+from typing import Callable, ClassVar, Generic, Iterator, NewType, TypeVar, Any, cast, overload
 from typing_extensions import ParamSpec, Concatenate, Self
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from concurrent.futures import ProcessPoolExecutor, Future, wait, FIRST_COMPLETED, Executor
+from concurrent.futures import ProcessPoolExecutor, Future, ThreadPoolExecutor, wait, FIRST_COMPLETED, Executor
 from functools import wraps
+import importlib.util
 import os
+import sys
+import subprocess
 import logging
 import inspect
 import json
 import base64
 import shutil
 
+import click
 import cloudpickle
 import zlib
 import diskcache as dc
 import networkx as nx
 
 
-CHECKPOINT_PATH = Path(os.getenv('CP_CACHE_DIR', './.cache')) / 'checkpoint'
-CHECKPOINT_PATH.mkdir(parents=True, exist_ok=True)
+class Context:
+    cache_dir = Path(os.getenv('CP_CACHE_DIR', './.cache'))
+    executor_name = os.getenv('CP_EXECUTOR', 'process')
+    max_workers = int(os.getenv('CP_MAX_WORKERS', -1))
+    num_cpu = os.cpu_count()
+
+    @classmethod
+    @contextmanager
+    def temporary_cache_directory(cls, cache_directory: Path) -> Iterator[None]:
+        old = cls.cache_dir
+        new = cache_directory / 'chekcpoint'
+        cls.cache_dir = new
+        yield
+        assert cls.cache_dir is new
+        cls.cache_dir = old
+
+    @classmethod
+    def get_executor(cls, max_workers: int | None = None) -> Executor:
+        if cls.executor_name == 'process':
+            executor_type = ProcessPoolExecutor
+        elif cls.executor_name == 'thread':
+            executor_type = ThreadPoolExecutor
+        else:
+            raise ValueError('Unrecognized executor name:', cls.executor_name)
+        if max_workers is None:
+            max_workers = cls.max_workers
+        if max_workers < 0:
+            assert isinstance(cls.num_cpu, int)
+            assert -cls.num_cpu <= cls.max_workers
+            max_workers = cls.num_cpu + 1 + cls.max_workers
+        return executor_type(max_workers=max_workers)
 
 
 LOGGER = logging.getLogger(__name__)
@@ -54,9 +88,9 @@ DEFAULT_SERIALIZER: Serializer = (cloudpickle.dumps, cloudpickle.loads)
 class Database(Generic[T, D]):
     """ Manage the cache of tasks.
     Layout:
-    CHECKPOINT_PATH / name / result     # return values
-    CHECKPOINT_PATH / name / timestamp  # timestamps
-    CHECKPOINT_PATH / name / data       # other data created by tasks
+    Context.cache_dir / 'checkpoint' / name / result     # return values
+    Context.cache_dir / 'checkpoint' / name / timestamp  # timestamps
+    Context.cache_dir / 'checkpoint' / name / data       # other data created by tasks
     """
     name: str
     base_path: str
@@ -67,7 +101,7 @@ class Database(Generic[T, D]):
 
     @classmethod
     def make(cls, name: str, compress_level: int) -> Self:
-        base_path = str(CHECKPOINT_PATH / name)
+        base_path = str(Context.cache_dir / 'checkpoint' / name)
         return Database(
                 name=name,
                 base_path=base_path,
@@ -202,13 +236,20 @@ class Task(TaskSkeleton[R]):
         out = self.runner()
         db.save(self.key, out)
 
-    def run(self, *, executor: Executor | None = None) -> R:
-        return self.run_with_info(executor=executor)[0]
+    def run(self, *, executor: Executor | None = None, max_workers: int | None = None) -> R:
+        return self.run_with_info(executor=executor, max_workers=max_workers)[0]
 
-    def run_with_info(self, *, executor: Executor | None = None, dump_generations: bool = False) -> tuple[R, dict[str, Any]]:
+    def run_with_info(
+            self, *,
+            executor: Executor | None = None,
+            max_workers: int | None = None,
+            dump_generations: bool = False
+            ) -> tuple[R, dict[str, Any]]:
         graph = TaskGraph.build_from(self)
         if executor is None:
-            executor = ProcessPoolExecutor()
+            executor = Context.get_executor(max_workers=max_workers)
+        else:
+            assert max_workers is None
         info = run_task_graph(graph=graph, executor=executor, dump_generations=dump_generations)
         return self.get_result(), info
 
@@ -562,3 +603,57 @@ def _run_task(task_data: bytes) -> tuple[str, Json]:
     assert isinstance(task, Task)
     task.set_result()
     return task.to_tuple()
+
+
+@dataclass
+class Entrypoint:
+    fn: RunnerFactory[[], None]
+    _register: ClassVar[list[Entrypoint]] = []
+
+    def __post_init__(self) -> None:
+        self._register.append(self)
+
+    def __call__(self) -> None:
+        with Context.temporary_cache_directory(Path(inspect.getmodule(self.fn).__module__).parent):
+            task(self.fn)().run()
+
+    @classmethod
+    def get_registered_entrypoint(cls) -> Task[None]:
+        entrypoints = cls._register
+        assert len(entrypoints) == 1, f'Expecting exactly one entrypoint, but got {entrypoints}'
+        return task(entrypoints[0].fn)()
+
+
+def entrypoint(fn: RunnerFactory[[], None]) -> Callable[[], None]:
+    return Entrypoint(fn)
+
+
+@click.command
+@click.argument('taskfile')
+@click.option('-e', '--exec-name', type=click.Choice(['process', 'thread']), default='process')
+@click.option('-n', '--num-workers', type=int, default=-1)
+@click.option('--cache-dir', default=None)
+def main(taskfile: str, exec_name: str, num_workers: int, cache_dir: str | None):
+    # Set arguments as environment variables
+    task_path = Path(taskfile)
+    os.environ['CP_EXECUTOR'] = exec_name
+    os.environ['CP_MAX_WORKERS'] = str(num_workers)
+    os.environ['CP_CACHE_DIR'] = str(task_path.parent / '.cache') if cache_dir is None else cache_dir
+
+    # Load script as module
+    module_name = task_path.with_suffix('').name
+    spec = importlib.util.spec_from_file_location(module_name, task_path)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    spec.loader.exec_module(module)
+
+    # Run the main task
+    result = module.main().run()
+    print(result)
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())
