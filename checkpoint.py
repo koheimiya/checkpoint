@@ -8,7 +8,7 @@ TODO:
     - Priority-based scheduling
 """
 from __future__ import annotations
-from typing import Callable, ClassVar, Generic, NewType, Protocol, TypeVar, Any, cast, overload
+from typing import Callable, ClassVar, Generic, NewType, TypeVar, Any, cast, overload
 from typing_extensions import ParamSpec, Concatenate, Self
 from collections import defaultdict
 from dataclasses import dataclass

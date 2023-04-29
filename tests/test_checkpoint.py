@@ -10,16 +10,16 @@ from checkpoint import requires_directory, task, requires
 def choose(n: int, k: int):
     if 0 < k < n:
         @requires([choose(n - 1, k - 1), choose(n - 1, k)])
-        def run_task(prev_two: list[int]):
+        def __(prev_two: list[int]):
             return sum(prev_two)
 
     elif k == 0 or k == n:
-        def run_task() -> int:
+        def __() -> int:
             return 1
 
     else:
         raise ValueError(f'{(n, k)}')
-    return run_task
+    return __
 
 
 def test_graph():
@@ -60,25 +60,25 @@ def test_graph():
 
 @task
 def task_a():
-    def run_task():
+    def __():
         return None
-    return run_task
+    return __
 
 
 @task(compress_level=6)
 def task_b():
-    def run_task():
+    def __():
         return None
-    return run_task
+    return __
 
 
 @task(compress_level=6)
 def task_c():
     @requires(task_a())
     @requires(task_b())
-    def run_task(a: None, b: None):
+    def __(a: None, b: None):
         return 42
-    return run_task
+    return __
 
 
 def test_multiple_tasks():
@@ -92,9 +92,9 @@ def test_multiple_tasks():
 def task_raise():
     @requires(task_a())
     @requires(task_b())
-    def run_task(a: None, b: None):
+    def __(a: None, b: None):
         raise ValueError(42)
-    return run_task
+    return __
 
 
 def test_raise():
@@ -103,43 +103,60 @@ def test_raise():
 
 
 @task
-def create_file():
+def create_file(content: str):
     @requires_directory
-    def run_task(path: Path) -> str:
+    def __(path: Path) -> str:
         outpath = path / 'test.txt'
         with open(outpath, 'w') as f:
-            f.write('hello')
+            f.write(content)
         return str(outpath)
-    return run_task
+    return __
 
 @task
-def peek_content():
-    @requires(create_file())
-    def run_task(path: str) -> str:
+def greet_with_file(name):
+    @requires(create_file(f'Hello, {name}!'))
+    def __(path: str) -> str:
         with open(path, 'r') as f:
             return f.read()
-    return run_task
+    return __
 
 
 def test_requires_directory():
     create_file.clear()
-    peek_content.clear()
-    taskdir = peek_content().directory
-    task_factory_dir = peek_content.db.data_directory
-    assert not taskdir.exists()  # task directory not created yet
+    greet_with_file.clear()
+    taskdir_world = create_file('Hello, world!').directory
+    taskdir_me = create_file('Hello, me!').directory
+    task_factory_dir = create_file.db.data_directory
 
-    assert peek_content().run() == 'hello'
-    peek_content.clear()
-    assert peek_content().run() == 'hello'  # files persist
+    def check_output(name: str):
+        assert greet_with_file(name).run() == f'Hello, {name}!'
 
+    assert not taskdir_world.exists()
+    assert not taskdir_me.exists()
+    assert not any(task_factory_dir.iterdir())
+    check_output('world')
+    check_output('me')
+    assert taskdir_world.exists()
+    assert taskdir_me.exists()
+    assert any(task_factory_dir.iterdir())
+
+    # Directories persist
+    greet_with_file.clear()
+    check_output('world')
+
+    # Specific task directory can be deleted
+    create_file('Hello, world!').clear()
+    assert not taskdir_world.exists()       # task directory deleted
+    assert taskdir_me.exists()              # other task directories are not deleted
+    assert any(task_factory_dir.iterdir())  # whole task directory is not deleted
+    check_output('world')                   # file recreated
+
+    # Task directory can be deleted at all
     create_file.clear()
-    assert not taskdir.exists()                 # task directory deleted
-    assert not any(task_factory_dir.iterdir())  # task factory directory is empty
-    assert peek_content().run() == 'hello'      # files recreated
-
-    create_file().clear()
-    assert not taskdir.exists()             # task directory deleted
-    assert peek_content().run() == 'hello'  # files recreated
+    assert not taskdir_world.exists()           # task directory deleted
+    assert not taskdir_me.exists()              # other task directories are also deleted
+    assert not any(task_factory_dir.iterdir())  # whole task directory is deleted
+    check_output('world')                       # file recreated
 
 
 @task

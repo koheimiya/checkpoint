@@ -27,19 +27,19 @@ def choose(n: int, k: int):
         # The return values of these tasks are passed as the arguments.
         @requires(choose(n - 1, k - 1))
         @requires(choose(n - 1, k)) 
-        def run_task(prev1: int, prev2: int) -> int:
+        def __(prev1: int, prev2: int) -> int:
             # Main computation
             return prev1 + prev2
     elif k == 0 or k == n:
         # Dependency can change according to the task parameters (`n` and `k`).
         # Here, we need no dependency to compute `choose(n, 1)` or `choose(n, n)`.
-        def run_task() -> int:
+        def __() -> int:
             return 1
     else:
         raise ValueError(f'{(n, k)}')
 
     # Return function that produces a value instead of the value itself.
-    return run_task
+    return __
 
 # Build the task graph to compute `choose(6, 3)`
 # and greedily consume it with `concurrent.futures.ProcessPoolExecutor`
@@ -81,9 +81,9 @@ def task2(**param2):
 def task3(json_params):
     @requires(task1(**json_params['param1']))
     @requires(task2(**json_params['param2']))
-    def run_task(result1, result2):
+    def __(result1, result2):
         ...
-    return run_task
+    return __
 
 result = task3({'param1': { ... }, 'param2': { ... }}).run()
 ```
@@ -94,9 +94,9 @@ Task dependencies can be specified with lists and dicts:
 def task3(json_params):
     @requires([task1(p) for p in json_params['my_param_list']])
     @requires({k: task2(p) for k, p in json_params['my_param_dict'].items()})
-    def run_task(result_list, result_dict):
+    def __(result_list, result_dict):
         ...
-    return run_task
+    return __
 
 result = task3({'my_param_list': [ ... ], 'my_param_dict': { ... }}).run()
 ```
@@ -120,13 +120,13 @@ def train_model(...):
     # Passing a new directory at
     # `{$CP_CACHE_DIR:-./.cache}/checkpoint/{module_name}.{function_name}/data/{cryptic_task_id}`
     @requires_directory
-    def run_task(path: Path) -> str:
+    def __(path: Path) -> str:
         ...
         model_path = str(path / 'model.bin')
         model.save(model_path)
         return model_path
 
-    return run_task
+    return __
 ```
 
 ### Execution policy configuration
