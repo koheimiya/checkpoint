@@ -117,9 +117,10 @@ from pathlib import Path
 @task
 def train_model(...):
 
-    # Passing a new directory at `$CHECKPOINT_PATH/checkpoint/{module_name}.{function_name}/data/{cryptic_task_id}`
+    # Passing a new directory at
+    # `{$CP_CACHE_DIR:-./.cache}/checkpoint/{module_name}.{function_name}/data/{cryptic_task_id}`
     @requires_directory
-    def run_task(path: Path):
+    def run_task(path: Path) -> str:
         ...
         model_path = str(path / 'model.bin')
         model.save(model_path)
