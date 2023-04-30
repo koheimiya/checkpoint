@@ -1,8 +1,8 @@
 """ A lightweight workflow management tool written in pure Python.
 
 TODO:
-    - Passing entrypoint task arguments via commandline (maybe unnecessary?)
-    - Automatic task change detection
+    - Task change detection
+        - via variable-anonymized AST
     - Priority-based scheduling
 """
 from __future__ import annotations
@@ -15,6 +15,7 @@ from pathlib import Path
 from concurrent.futures import ProcessPoolExecutor, Future, ThreadPoolExecutor, wait, FIRST_COMPLETED, Executor
 from functools import wraps
 import importlib.util
+import ast
 import os
 import sys
 import logging
@@ -23,8 +24,6 @@ import json
 import base64
 import shutil
 
-import black
-import black.mode
 import click
 import cloudpickle
 import zlib
@@ -36,6 +35,7 @@ class Context:
     cache_dir = Path(os.getenv('CP_CACHE_DIR', './.cache'))
     executor_name = os.getenv('CP_EXECUTOR', 'process')
     max_workers = int(os.getenv('CP_MAX_WORKERS', -1))
+    detect_source_change = bool(os.getenv('CP_DETECT_SOURCE_CHANGE', 0))
     num_cpu = os.cpu_count()
 
     @classmethod
@@ -81,30 +81,48 @@ class Database(Generic[T, D]):
     Context.cache_dir / 'checkpoint' / name / data       # other data created by tasks
     """
     name: str
-    base_path: str
+    base_path: Path
     compress_level: int
     result_cache: dc.Cache
     timestamp_cache: dc.Cache
-    # TODO: add source cache
     serializer: Serializer = DEFAULT_SERIALIZER
 
     @classmethod
     def make(cls, name: str, compress_level: int) -> Self:
-        base_path = str(Context.cache_dir / 'checkpoint' / name)
+        base_path = Context.cache_dir / 'checkpoint' / name
         return Database(
                 name=name,
                 base_path=base_path,
                 compress_level=compress_level,
-                result_cache=dc.Cache(base_path + '/result'),
-                timestamp_cache=dc.Cache(base_path + '/timestamp'),
+                result_cache=dc.Cache(base_path / 'result'),
+                timestamp_cache=dc.Cache(base_path / 'timestamp'),
                 )
 
     def __post_init__(self) -> None:
         self.data_directory.mkdir(exist_ok=True)
+        self.source_path.parent.mkdir(exist_ok=True)
 
     @property
     def data_directory(self) -> Path:
         return Path(self.base_path) / 'data'
+
+    @property
+    def source_path(self) -> Path:
+        return Path(self.base_path) / 'code' / 'source.txt'
+
+    def update_source_if_necessary(self, source: str) -> datetime:
+        # Update source cache
+        if self.source_path.exists():
+            cached_source = open(self.source_path, 'r').read()
+        else:
+            cached_source = None
+        if cached_source != source:
+            open(self.source_path, 'w').write(source)
+        return self.load_source_timestamp()
+
+    def load_source_timestamp(self) -> datetime:
+        timestamp = self.source_path.stat().st_mtime_ns / 10 ** 9
+        return datetime.fromtimestamp(timestamp)
 
     def _dumps(self, obj: Any) -> bytes:
         dumps, _ = self.serializer
@@ -248,7 +266,7 @@ class TaskFactory(Generic[P, R]):
     runner_factory: RunnerFactory[P, R]
     db: Database
     max_concurrency: int | None
-    source: str
+    source_timestamp: datetime
 
     def get_db_name(self) -> str:
         return self.db.name
@@ -280,14 +298,17 @@ def _task(
     """ Convert a runner factory into a task factory. """
 
     def decorator(fn: RunnerFactory[P, R]) -> TaskFactory[P, R]:
-        source = black.format_str(inspect.getsource(fn), mode=black.mode.Mode())
-        print(source)
         name = _serialize_function(fn)
         db = Database.make(name=name, compress_level=compress_level)
+
+        source = inspect.getsource(fn)
+        formatted_source = ast.unparse(ast.parse(source))
+        source_timestamp = db.update_source_if_necessary(formatted_source)
+
         return wraps(fn)(TaskFactory(
             runner_factory=fn, db=db,
             max_concurrency=max_concurrency,
-            source=source
+            source_timestamp=source_timestamp
             ))
     return decorator
 
@@ -400,7 +421,7 @@ class RequiresDirectory(Generic[P, R]):
     def __call__(self, *args: P.args, **kwargs: P.kwargs) -> R:
         assert self.directory is not None, 'Directory not set. Bug?'
         if self.directory.exists():
-            self.directory.rmdir()
+            shutil.rmtree(self.directory)
         self.directory.mkdir()
         return self.fn(self.directory, *args, **kwargs)
 
@@ -441,7 +462,7 @@ class TaskGraph:
                 seen.add(x)
                 prerequisite_tasks = get_prerequisite_tasks(task)
                 to_expand.extend(prerequisite_tasks)
-                G.add_node(x, task=task, timestamp=task.peek_timestamp())
+                G.add_node(x, task=task, timestamp=task.peek_timestamp(), source_timestamp=task.task_factory.source_timestamp)
                 G.add_edges_from([(p.to_tuple(), x) for p in prerequisite_tasks])
         out = TaskGraph(G)
         out.trim()
@@ -455,29 +476,29 @@ class TaskGraph:
         return self.G.nodes[key]['task']
 
     def trim(self) -> None:
-        self._mark_fresh_nodes()
+        self._mark_nodes_to_update()
         self._remove_fresh_nodes()
         self._transitive_reduction()
 
-    def _mark_fresh_nodes(self) -> None:
+    def _mark_nodes_to_update(self) -> None:
         for x in nx.topological_sort(self.G):
-            ts0 = self.G.nodes[x]['timestamp']
-            if ts0 is None:
-                self.G.add_node(x, fresh=False)
+            ts_task = self.G.nodes[x]['timestamp']
+            ts_source = self.G.nodes[x]['source_timestamp']
+            if ts_task is None or (Context.detect_source_change and ts_task < ts_source):
+                self.G.add_node(x, to_update=True)
                 continue
-            for y in self.G.predecessors(x):
-                fresh_y = self.G.nodes[y]['fresh']
-                ts = self.G.nodes[y]['timestamp']
-                if not fresh_y or ts is None or ts > ts0:
-                    self.G.add_node(x, fresh=False)
+            for p in self.G.predecessors(x):
+                pred_to_update = self.G.nodes[p]['to_update']
+                ts_pred = self.G.nodes[p]['timestamp']
+                if pred_to_update or ts_task < ts_pred:
+                    self.G.add_node(x, to_update=True)
                     break
             else:
-                self.G.add_node(x, fresh=True)
+                self.G.add_node(x, to_update=False)
 
     def _remove_fresh_nodes(self) -> None:
-        to_remove = [x for x, attr in self.G.nodes.items() if attr['fresh']]
-        for x in to_remove:
-            self.G.remove_node(x)
+        to_remove = [x for x, attr in self.G.nodes.items() if not attr['to_update']]
+        self.G.remove_nodes_from(to_remove)
 
     def _transitive_reduction(self) -> None:
         TR = nx.transitive_reduction(self.G)
@@ -600,16 +621,17 @@ def _run_task(task_data: bytes) -> tuple[str, Json]:
 
 @click.command
 @click.argument('taskfile', type=Path)
-@click.option('-e', '--entrypoint', default='main')
+@click.option('-e', '--entrypoint', default='main', help='Task name for entrypoint.')
 @click.option('-t', '--exec-type', type=click.Choice(['process', 'thread']), default='process')
 @click.option('-w', '--max-workers', type=int, default=-1)
 @click.option('--cache-dir', type=Path, default=None)
-@click.option('--detect-source-change', is_flag=True)
+@click.option('-D', '--detect-source-change', is_flag=True, help='Automatically discard the cache per task once the source code (AST) is changed.')
 def main(taskfile: Path, entrypoint: str, exec_type: str, max_workers: int, cache_dir: Path | None, detect_source_change: bool):
     # Set arguments as environment variables
     os.environ['CP_EXECUTOR'] = exec_type
     os.environ['CP_MAX_WORKERS'] = str(max_workers)
     os.environ['CP_CACHE_DIR'] = str(taskfile.parent / '.cache') if cache_dir is None else str(cache_dir)
+    os.environ['CP_DETECT_SOURCE_CHANGE'] = str(int(detect_source_change))
 
     # Run script as module
     module_name = taskfile.with_suffix('').name
