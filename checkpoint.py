@@ -1,13 +1,12 @@
 """ A lightweight workflow management tool written in pure Python.
 
 TODO:
-    - Passing entrypoint task arguments via commandline
+    - Passing entrypoint task arguments via commandline (maybe unnecessary?)
     - Automatic task change detection
     - Priority-based scheduling
 """
 from __future__ import annotations
-from contextlib import contextmanager
-from typing import Callable, ClassVar, Generic, Iterator, NewType, TypeVar, Any, cast, overload
+from typing import Callable, ClassVar, Generic, NewType, TypeVar, Any, cast, overload
 from typing_extensions import ParamSpec, Concatenate, Self
 from collections import defaultdict
 from dataclasses import dataclass
@@ -24,6 +23,8 @@ import json
 import base64
 import shutil
 
+import black
+import black.mode
 import click
 import cloudpickle
 import zlib
@@ -36,16 +37,6 @@ class Context:
     executor_name = os.getenv('CP_EXECUTOR', 'process')
     max_workers = int(os.getenv('CP_MAX_WORKERS', -1))
     num_cpu = os.cpu_count()
-
-    @classmethod
-    @contextmanager
-    def temporary_cache_directory(cls, cache_directory: Path) -> Iterator[None]:
-        old = cls.cache_dir
-        new = cache_directory / 'chekcpoint'
-        cls.cache_dir = new
-        yield
-        assert cls.cache_dir is new
-        cls.cache_dir = old
 
     @classmethod
     def get_executor(cls, max_workers: int | None = None) -> Executor:
@@ -94,6 +85,7 @@ class Database(Generic[T, D]):
     compress_level: int
     result_cache: dc.Cache
     timestamp_cache: dc.Cache
+    # TODO: add source cache
     serializer: Serializer = DEFAULT_SERIALIZER
 
     @classmethod
@@ -256,6 +248,7 @@ class TaskFactory(Generic[P, R]):
     runner_factory: RunnerFactory[P, R]
     db: Database
     max_concurrency: int | None
+    source: str
 
     def get_db_name(self) -> str:
         return self.db.name
@@ -287,11 +280,14 @@ def _task(
     """ Convert a runner factory into a task factory. """
 
     def decorator(fn: RunnerFactory[P, R]) -> TaskFactory[P, R]:
+        source = black.format_str(inspect.getsource(fn), mode=black.mode.Mode())
+        print(source)
         name = _serialize_function(fn)
         db = Database.make(name=name, compress_level=compress_level)
         return wraps(fn)(TaskFactory(
             runner_factory=fn, db=db,
-            max_concurrency=max_concurrency
+            max_concurrency=max_concurrency,
+            source=source
             ))
     return decorator
 
@@ -602,36 +598,14 @@ def _run_task(task_data: bytes) -> tuple[str, Json]:
     return task.to_tuple()
 
 
-@dataclass
-class Entrypoint:
-    fn: RunnerFactory[[], None]
-    _register: ClassVar[list[Entrypoint]] = []
-
-    def __post_init__(self) -> None:
-        self._register.append(self)
-
-    def __call__(self) -> None:
-        with Context.temporary_cache_directory(Path(inspect.getmodule(self.fn).__module__).parent):
-            task(self.fn)().run()
-
-    @classmethod
-    def get_registered_entrypoint(cls) -> Task[None]:
-        entrypoints = cls._register
-        assert len(entrypoints) == 1, f'Expecting exactly one entrypoint, but got {entrypoints}'
-        return task(entrypoints[0].fn)()
-
-
-def entrypoint(fn: RunnerFactory[[], None]) -> Callable[[], None]:
-    return Entrypoint(fn)
-
-
 @click.command
 @click.argument('taskfile', type=Path)
 @click.option('-e', '--entrypoint', default='main')
 @click.option('-t', '--exec-type', type=click.Choice(['process', 'thread']), default='process')
 @click.option('-w', '--max-workers', type=int, default=-1)
 @click.option('--cache-dir', type=Path, default=None)
-def main(taskfile: Path, entrypoint: str, exec_type: str, max_workers: int, cache_dir: Path | None):
+@click.option('--detect-source-change', is_flag=True)
+def main(taskfile: Path, entrypoint: str, exec_type: str, max_workers: int, cache_dir: Path | None, detect_source_change: bool):
     # Set arguments as environment variables
     os.environ['CP_EXECUTOR'] = exec_type
     os.environ['CP_MAX_WORKERS'] = str(max_workers)
