@@ -1,6 +1,8 @@
 """ A lightweight workflow management tool written in pure Python.
 
 TODO:
+    - Passing entrypoint task arguments via commandline
+    - Automatic task change detection
     - Priority-based scheduling
 """
 from __future__ import annotations
@@ -624,21 +626,20 @@ def entrypoint(fn: RunnerFactory[[], None]) -> Callable[[], None]:
 
 
 @click.command
-@click.argument('taskfile')
-@click.option('-e', '--exec-name', type=click.Choice(['process', 'thread']), default='process')
-@click.option('-n', '--num-workers', type=int, default=-1)
-@click.option('--cache-dir', default=None)
-@click.option('--dont-clear-main', is_flag=True)
-def main(taskfile: str, exec_name: str, num_workers: int, cache_dir: str | None, dont_clear_main: bool):
+@click.argument('taskfile', type=Path)
+@click.option('-e', '--entrypoint', default='main')
+@click.option('-t', '--exec-type', type=click.Choice(['process', 'thread']), default='process')
+@click.option('-w', '--max-workers', type=int, default=-1)
+@click.option('--cache-dir', type=Path, default=None)
+def main(taskfile: Path, entrypoint: str, exec_type: str, max_workers: int, cache_dir: Path | None):
     # Set arguments as environment variables
-    task_path = Path(taskfile)
-    os.environ['CP_EXECUTOR'] = exec_name
-    os.environ['CP_MAX_WORKERS'] = str(num_workers)
-    os.environ['CP_CACHE_DIR'] = str(task_path.parent / '.cache') if cache_dir is None else cache_dir
+    os.environ['CP_EXECUTOR'] = exec_type
+    os.environ['CP_MAX_WORKERS'] = str(max_workers)
+    os.environ['CP_CACHE_DIR'] = str(taskfile.parent / '.cache') if cache_dir is None else str(cache_dir)
 
-    # Load script as module
-    module_name = task_path.with_suffix('').name
-    spec = importlib.util.spec_from_file_location(module_name, task_path)
+    # Run script as module
+    module_name = taskfile.with_suffix('').name
+    spec = importlib.util.spec_from_file_location(module_name, taskfile)
     assert spec is not None
     assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
@@ -646,9 +647,13 @@ def main(taskfile: str, exec_name: str, num_workers: int, cache_dir: str | None,
     spec.loader.exec_module(module)
 
     # Run the main task
-    if not dont_clear_main:
-        module.main.clear()
-    module.main().run()
+    entrypoint_fn = getattr(module, entrypoint)
+    assert type(entrypoint_fn).__name__ == TaskFactory.__name__, \
+            f'Taskfile `{taskfile}` should contain a task(factory) `{entrypoint}`, but found `{entrypoint_fn}`.'
+    entrypoint_fn = cast(TaskFactory, entrypoint_fn)
+    task = entrypoint_fn()
+    task.run()
+    print(task.directory)
     return 0
 
 
