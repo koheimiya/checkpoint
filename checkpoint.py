@@ -285,10 +285,10 @@ class TaskFactory(Generic[P, R]):
 
 
 @overload
-def taskflow(fn: RunnerFactory[P, R]) -> TaskFactory[P, R]: ...
+def task(fn: RunnerFactory[P, R]) -> TaskFactory[P, R]: ...
 @overload
-def taskflow(*, compress_level: int = 0, max_concurrency: int | None = None) -> Callable[[RunnerFactory[P, R]], TaskFactory[P, R]]: ...
-def taskflow(*args, **kwargs) -> Any:
+def task(*, compress_level: int = 0, max_concurrency: int | None = None) -> Callable[[RunnerFactory[P, R]], TaskFactory[P, R]]: ...
+def task(*args, **kwargs) -> Any:
     if args:
         fn, = args
         return _task()(fn)
@@ -457,10 +457,6 @@ class requires(Generic[S]):
             return Fulfillment(cont=f.cont.cons(self.task), fn=f.fn)
         else:
             return Fulfillment(TaskCont.empty().cons(self.task), f)
-
-
-def task(f: Runner[T]) -> Runner[T]:
-    return f
 
 
 @dataclass
@@ -652,12 +648,14 @@ def main(taskfile: Path, entrypoint: str, exec_type: str, max_workers: int, cach
 
     # Run script as module
     module_name = taskfile.with_suffix('').name
-    spec = importlib.util.spec_from_file_location(module_name, taskfile)
-    assert spec is not None
-    assert spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[module_name] = module
-    spec.loader.exec_module(module)
+    sys.path.append(str(taskfile.parent))
+    module = __import__(module_name)
+    # spec = importlib.util.spec_from_file_location(module_name, taskfile)
+    # assert spec is not None
+    # assert spec.loader is not None
+    # module = importlib.util.module_from_spec(spec)
+    # sys.modules[module_name] = module
+    # spec.loader.exec_module(module)
 
     # Run the main task
     entrypoint_fn = getattr(module, entrypoint)

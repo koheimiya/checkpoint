@@ -1,8 +1,8 @@
 from pathlib import Path
-from checkpoint import requires, TaskDirectory, taskflow
+from checkpoint import requires, TaskDirectory, task
 
 
-@taskflow
+@task
 def main():
     """ Example task """
     @requires(TaskDirectory())

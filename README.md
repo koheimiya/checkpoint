@@ -20,7 +20,7 @@ Create task with decorators:
 from checkpoint import task, requires
 
 # Mark a function as task
-@taskflow
+@task
 def choose(n: int, k: int):
     if 0 < k < n:
         # Mark dependencies on other tasks;
@@ -69,15 +69,15 @@ choose.clear()
 
 More complex inputs can be used as long as it is JSON serializable:
 ```python
-@taskflow
+@task
 def task1(**param1):
     ...
 
-@taskflow
+@task
 def task2(**param2):
     ...
 
-@taskflow
+@task
 def task3(json_params):
     @requires(task1(**json_params['param1']))
     @requires(task2(**json_params['param2']))
@@ -90,7 +90,7 @@ result = task3({'param1': { ... }, 'param2': { ... }}).run()
 
 Task dependencies can be specified with lists and dicts:
 ```python
-@taskflow
+@task
 def task3(json_params):
     @requires([task1(p) for p in json_params['my_param_list']])
     @requires({k: task2(p) for k, p in json_params['my_param_dict'].items()})
@@ -115,7 +115,7 @@ Use `TaskDirectory` to create a fresh directory dedicated to each task. The cont
 from pathlib import Path
 from checkpoint import TaskDirectory
 
-@taskflow
+@task
 def train_model(...):
 
     # Passing a new directory at
@@ -136,7 +136,7 @@ One can control the task execution with `concurrent.futures.Executor` class:
 ```python
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 
-@taskflow
+@task
 def my_task():
     ...
 
@@ -159,7 +159,7 @@ We can use checkpoint-tool from commandline like `python -m checkpoint path/to/t
 ```python
 # taskfile.py
 
-@taskflow
+@task
 def main():
     ...
 ```

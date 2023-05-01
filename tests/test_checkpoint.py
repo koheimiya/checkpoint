@@ -1,10 +1,10 @@
 from pathlib import Path
 from typing import Any
 import pytest
-from checkpoint import taskflow, requires, TaskDirectory
+from checkpoint import task, requires, TaskDirectory
 
 
-@taskflow(max_concurrency=1)
+@task(max_concurrency=1)
 def choose(n: int, k: int):
     if 0 < k < n:
         @requires([choose(n - 1, k - 1), choose(n - 1, k)])
@@ -57,21 +57,21 @@ def test_graph():
     assert ans == 20
     assert sum(info['stats'].values()) == 4
 
-@taskflow
+@task
 def task_a():
     def __():
         return None
     return __
 
 
-@taskflow(compress_level=6)
+@task(compress_level=6)
 def task_b():
     def __():
         return None
     return __
 
 
-@taskflow(compress_level=6)
+@task(compress_level=6)
 def task_c():
     @requires(task_a())
     @requires(task_b())
@@ -87,7 +87,7 @@ def test_multiple_tasks():
     assert task_c().run() == 42
 
 
-@taskflow(compress_level=6)
+@task(compress_level=6)
 def task_raise():
     @requires(task_a())
     @requires(task_b())
@@ -101,7 +101,7 @@ def test_raise():
         task_raise().run()
 
 
-@taskflow
+@task
 def create_file(content: str):
     @requires(TaskDirectory())
     def __(path: Path) -> str:
@@ -111,7 +111,7 @@ def create_file(content: str):
         return str(outpath)
     return __
 
-@taskflow
+@task
 def greet_with_file(name):
     @requires(create_file(f'Hello, {name}!'))
     def __(path: str) -> str:
@@ -158,14 +158,14 @@ def test_requires_directory():
     check_output('world')                       # file recreated
 
 
-@taskflow
+@task
 def count_elem(x: list | dict):
     def __() -> int:
         return len(x)
     return __
 
 
-@taskflow
+@task
 def summarize_param(**params: Any):
     container_keys = [k for k in params if isinstance(params[k], (list, dict))]
 

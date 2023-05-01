@@ -1,83 +1,100 @@
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
-from checkpoint import Task, taskflow, requires, TaskDirectory
+from typing import Any, Generic, NewType, Protocol, TypeVar
+
+from cloudpickle import dump, load
+from checkpoint import Task, task, requires, TaskDirectory
 
 
-@taskflow
+# For demonstration
+Data = NewType('Data', str)
+Model = NewType('Model', str)
+
+
+T_co = TypeVar('T_co', covariant=True)
+class Loader(Protocol[T_co]):
+    def load(self) -> T_co:
+        ...
+
+
+@dataclass
+class PickleLoader(Generic[T_co]):
+    def __init__(self, obj: T_co, path: Path) -> None:
+        self.path = path
+        dump(obj, open(self.path, 'wb'))
+
+    def load(self) -> T_co:
+        return load(open(self.path, 'rb'))
+
+
+@task
 def load_data(name: str):
 
     @requires(TaskDirectory())
-    def __(path: Path) -> Path:
-        data_path = path / f'data.txt'
-        # Download the dataset to data_path ...
-        open(data_path, 'w').write('<some data>')
-        return data_path
+    def __(path: Path) -> Loader[Data]:
+        # Download a dataset ...
+        data_loader = PickleLoader(Data(f'<data: {name}>'), path / f'data.txt')
+        return data_loader
     return __
 
 
-@taskflow
+@task
 def preprocess_data(name: str, split_ratio: float, seed: int):
 
     @requires(TaskDirectory())
     @requires(load_data(name))
-    def __(path: Path, data_path: Path) -> tuple[Path, Path, Path]:
-        train_path = path / f'train.txt'
-        valid_path = path / f'valid.txt'
-        test_path = path / f'test.txt'
+    def __(path: Path, data_loader: Loader[Data]) -> dict[str, Loader[Data]]:
+        data = data_loader.load()
         # Split the dataset at data_path into splits ...
-        open(train_path, 'w').write('<train data>')
-        open(valid_path, 'w').write('<valid data>')
-        open(test_path, 'w').write('<test data>')
-        return train_path, valid_path, test_path
+        train_loader = PickleLoader(Data('<train data>'), path / 'train.txt')
+        valid_loader = PickleLoader(Data('<valid data>'), path / 'train.txt')
+        test_loader = PickleLoader(Data('<test data>'), path / 'train.txt')
+        return {'train': train_loader, 'valid': valid_loader, 'test': test_loader}
     return __
 
 
-@taskflow
+@task
 def load_model(name: str):
 
     @requires(TaskDirectory())
-    def __(path: Path) -> Path:
+    def __(path: Path) -> Loader[Model]:
         model_path = path / f'{name}.bin'
         # Download the model to model_path ...
-        open(model_path, 'w').write('<initial model>')
-        return model_path
+        return PickleLoader(Model('<initial model>'), model_path)
     return __
 
 
-@taskflow
-def train_model(preprocessed_data: Task[tuple[Path, Path, Path]], initial_model: Task[Path], train_config: dict, seed: int):
+@task
+def train_model(preprocessed_data: Task[dict[str, Loader[Data]]], initial_model: Task[Loader[Model]], train_config: dict, seed: int):
     
     @requires(TaskDirectory())
     @requires(preprocessed_data)
     @requires(initial_model)
-    def __(path: Path, train_valid_test: tuple[Path, Path, Path], model_path: Path) -> Path:
-        train, valid, _ = train_valid_test
-        train_data = open(train, 'r').read()
-        valid_data = open(valid, 'r').read()
-        model = open(model_path, 'r').read()
-        trained_path = path / f'trained.bin'
+    def __(path: Path, data_dict: dict[str, Loader[Data]], model_loader: Loader[Model]) -> Loader[Model]:
+        train_data = data_dict['train'].load()
+        valid_data = data_dict['valid'].load()
+        model = model_loader.load()
         # Train model with data and save it to trained_path ...
-        open(trained_path, 'w').write('<trained model>')
-        return trained_path
+        trained_path = path / f'trained.bin'
+        return PickleLoader(Model('<trained model>'), trained_path)
     return __
 
 
-@taskflow
-def test_model(preprocessed_data: Task[tuple[Path, Path, Path]], trained_model: Task[Path]):
+@task
+def test_model(preprocessed_data: Task[dict[str, Loader[Data]]], trained_model: Task[Loader[Model]]):
     
     @requires(preprocessed_data)
     @requires(trained_model)
-    def __(train_valid_test: tuple[Path, Path, Path], model_path: Path) -> dict[str, Any]:
-        _, _, test = train_valid_test
-        test_data = open(test, 'r').read()
-        model = open(model_path, 'r').read()
+    def __(dataset: dict[str, Loader[Data]], model_loader: Loader[Model]) -> dict[str, Any]:
+        test_data = dataset['test'].load()
+        model = model_loader.load()
         # Evaluate model on test_data ...
         result = {'score': ...}
         return result
     return __
 
 
-@taskflow
+@task
 def main():
 
     tasks: list[Task[dict]] = []
