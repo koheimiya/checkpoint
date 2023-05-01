@@ -20,7 +20,7 @@ Create task with decorators:
 from checkpoint import task, requires
 
 # Mark a function as task
-@task
+@taskflow
 def choose(n: int, k: int):
     if 0 < k < n:
         # Mark dependencies on other tasks;
@@ -69,15 +69,15 @@ choose.clear()
 
 More complex inputs can be used as long as it is JSON serializable:
 ```python
-@task
+@taskflow
 def task1(**param1):
     ...
 
-@task
+@taskflow
 def task2(**param2):
     ...
 
-@task
+@taskflow
 def task3(json_params):
     @requires(task1(**json_params['param1']))
     @requires(task2(**json_params['param2']))
@@ -90,7 +90,7 @@ result = task3({'param1': { ... }, 'param2': { ... }}).run()
 
 Task dependencies can be specified with lists and dicts:
 ```python
-@task
+@taskflow
 def task3(json_params):
     @requires([task1(p) for p in json_params['my_param_list']])
     @requires({k: task2(p) for k, p in json_params['my_param_dict'].items()})
@@ -110,17 +110,17 @@ def large_output_task(*args, **kwargs):
 
 ### Data directories
 
-Use `@requires_directory` decorator to create a fresh directory dedicated to each task. The contents of the directory are cleared at each task call and persist until `clear`ed.
+Use `TaskDirectory` to create a fresh directory dedicated to each task. The contents of the directory are cleared at each task call and persist until `clear`ed.
 ```python
 from pathlib import Path
-from checkpoint import requires_directory
+from checkpoint import TaskDirectory
 
-@task
+@taskflow
 def train_model(...):
 
     # Passing a new directory at
     # `{$CP_CACHE_DIR:-./.cache}/checkpoint/{module_name}.{function_name}/data/{cryptic_task_id}`
-    @requires_directory
+    @requires(TaskDirectory())
     def __(path: Path) -> str:
         ...
         model_path = str(path / 'model.bin')
@@ -136,7 +136,7 @@ One can control the task execution with `concurrent.futures.Executor` class:
 ```python
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 
-@task
+@taskflow
 def my_task():
     ...
 
@@ -159,7 +159,7 @@ We can use checkpoint-tool from commandline like `python -m checkpoint path/to/t
 ```python
 # taskfile.py
 
-@task
+@taskflow
 def main():
     ...
 ```

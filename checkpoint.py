@@ -63,7 +63,10 @@ Json = NewType('Json', str)
 
 K = TypeVar('K')
 T = TypeVar('T')
+S = TypeVar('S')
+U = TypeVar('U')
 P = ParamSpec('P')
+Q = ParamSpec('Q')
 R = TypeVar('R', covariant=True)
 D = TypeVar('D')
 
@@ -196,7 +199,8 @@ class TaskSkeleton(Generic[R]):
     @property
     def arg_id(self) -> str:
         _, arg_str = self.to_tuple()
-        return base64.urlsafe_b64encode(arg_str.encode()).decode().replace('=', '')
+        id_ = base64.urlsafe_b64encode(zlib.compress(arg_str.encode(), level=9)).decode().replace('=', '')
+        return os.path.join(*[id_[i:i+255] for i in range(0, len(id_), 255)])
 
     @property
     def directory(self) -> Path:
@@ -281,10 +285,10 @@ class TaskFactory(Generic[P, R]):
 
 
 @overload
-def task(fn: RunnerFactory[P, R]) -> TaskFactory[P, R]: ...
+def taskflow(fn: RunnerFactory[P, R]) -> TaskFactory[P, R]: ...
 @overload
-def task(*, compress_level: int = 0, max_concurrency: int | None = None) -> Callable[[RunnerFactory[P, R]], TaskFactory[P, R]]: ...
-def task(*args, **kwargs) -> Any:
+def taskflow(*, compress_level: int = 0, max_concurrency: int | None = None) -> Callable[[RunnerFactory[P, R]], TaskFactory[P, R]]: ...
+def taskflow(*args, **kwargs) -> Any:
     if args:
         fn, = args
         return _task()(fn)
@@ -325,125 +329,138 @@ def _normalize_arguments(fn: Callable[P, Any], *args: P.args, **kwargs: P.kwargs
 
 def _serialize_arguments(fn: Callable[P, Any], *args: P.args, **kwargs: P.kwargs) -> Json:
     arguments = _normalize_arguments(fn, *args, **kwargs)
-    return cast(Json, json.dumps(arguments, separators=(',', ':'), sort_keys=True))
+    return cast(Json, json.dumps(arguments, separators=(',', ':'), sort_keys=True, cls=CustomJSONEncoder))
+
+
+class CustomJSONEncoder(json.JSONEncoder):
+    def default(self, o):
+        if isinstance(o, Task):
+            return {'__task__': o.to_tuple()}
+        else:
+            # Let the base class default method raise the TypeError
+            return super().default(o)
 
 
 AnyTask = Task[Any]
-Connector = Callable[[Callable[Concatenate[T, P], R]], Callable[P, R]]  # Takes (T, *P) -> R and return P -> R
-
-
-@overload
-def requires(task: Task[T]) -> Connector[T, P, R]: ...
-@overload
-def requires(task: list[Task[T]]) -> Connector[list[T], P, R]: ...
-@overload
-def requires(task: dict[K, Task[T]]) -> Connector[dict[K, T], P, R]: ...
-def requires(task: AnyTask | list[AnyTask] | dict[Any, AnyTask]) -> Any:
-    """ Register a task dependency """
-    if isinstance(task, Task):
-        return requires_single(task)
-    elif isinstance(task, list):
-        return requires_list(task)
-    elif isinstance(task, dict):
-        return requires_dict(task)
-    else:
-        raise TypeError(task)
-
-
-@dataclass(frozen=True)
-class Connected(Generic[T, P, R]):
-    """ Connect a task to a function. """
-    pre_task: Task[T]
-    fn: Callable[Concatenate[T, P], R]
-
-    def __call__(self, *args: P.args, **kwargs: P.kwargs) -> R:
-        x = self.pre_task.get_result()
-        return self.fn(x, *args, **kwargs)
-
-    def get_prerequisites(self) -> list[AnyTask]:
-        return [self.pre_task]
-
-
-def requires_single(task: Task[T]) -> Connector[T, P, R]:
-    """ Register a task dependency """
-    def decorator(fn: Callable[Concatenate[T, P], R]) -> Callable[P, R]:
-        return Connected(task, fn)
-    return decorator
-
-
-@dataclass(frozen=True)
-class ListConnected(Generic[T, P, R]):
-    """ Connect a list of tasks to a function. """
-    pre_tasks: list[Task[T]]
-    fn: Callable[Concatenate[list[T], P], R]
-
-    def __call__(self, *args: P.args, **kwargs: P.kwargs) -> R:
-        xs = [task.get_result() for task in self.pre_tasks]
-        return self.fn(xs, *args, **kwargs)
-
-    def get_prerequisites(self) -> list[AnyTask]:
-        return self.pre_tasks
-
-
-def requires_list(tasks: list[Task[T]]) -> Connector[list[T], P, R]:
-    """ Register a task dependency """
-    def decorator(fn: Callable[Concatenate[list[T], P], R]) -> Callable[P, R]:
-        return ListConnected(tasks, fn)
-    return decorator
-
-
-@dataclass(frozen=True)
-class DictConnected(Generic[K, T, P, R]):
-    """ Connect a dict of tasks to a function. """
-    pre_tasks: dict[K, Task[T]]
-    fn: Callable[Concatenate[dict[K, T], P], R]
-
-    def __call__(self, *args: P.args, **kwargs: P.kwargs) -> R:
-        xs = {k: task.get_result() for k, task in self.pre_tasks.items()}
-        return self.fn(xs, *args, **kwargs)
-
-    def get_prerequisites(self) -> list[AnyTask]:
-        return list(self.pre_tasks.values())
-
-
-def requires_dict(tasks: dict[K, Task[T]]) -> Connector[dict[K, T], P, R]:
-    """ Register a task dependency """
-    def decorator(fn: Callable[Concatenate[dict[K, T], P], R]) -> Callable[P, R]:
-        return DictConnected(tasks, fn)
-    return decorator
-
-
-@dataclass
-class RequiresDirectory(Generic[P, R]):
-    fn: Callable[Concatenate[Path, P], R]
-    directory: Path | None = None
-
-    def __call__(self, *args: P.args, **kwargs: P.kwargs) -> R:
-        assert self.directory is not None, 'Directory not set. Bug?'
-        if self.directory.exists():
-            shutil.rmtree(self.directory)
-        self.directory.mkdir()
-        return self.fn(self.directory, *args, **kwargs)
-
-    def set_directory(self, path: Path) -> None:
-        self.directory = path
-
-
-def requires_directory(fn: Callable[Concatenate[Path, P], R]) -> Callable[P, R]:
-    """ Create fresh directory dedicated to the task """
-    return RequiresDirectory(fn)
 
 
 def get_prerequisite_tasks(task: AnyTask) -> list[AnyTask]:
-    deps: list[Task[Any]] = []
-    task_fn = task.runner
-    while isinstance(task_fn, (Connected, ListConnected, DictConnected, RequiresDirectory)):
-        if isinstance(task_fn, (Connected, ListConnected, DictConnected)):
-            deps.extend(task_fn.get_prerequisites())
+    if isinstance(task.runner, Fulfillment):
+        task.runner.set_directory(task.directory)
+        return task.runner.get_tasks()
+    else:
+        return []
+
+
+@dataclass
+class TaskDirectory:
+    path: Path | None = None
+
+    def get_path_prepared(self) -> Path:
+        assert self.path is not None, 'Should never happens.'
+        if self.path.exists():
+            shutil.rmtree(self.path)
+        self.path.mkdir()
+        return self.path
+
+
+@dataclass
+class TaskCont(Generic[P]):
+    args: list[AnyTask | list[AnyTask] | dict[Any, AnyTask] | TaskDirectory]
+
+    def __call__(self, fn: Callable[P, T]) -> T:
+        args: list[Any] = []
+        for a in self.args:
+            if isinstance(a, Task):
+                args.append(a.get_result())
+            elif isinstance(a, list):
+                args.append([ai.get_result() for ai in a])
+            elif isinstance(a, dict):
+                args.append({k: v.get_result() for k, v in a.items()})
+            elif isinstance(a, TaskDirectory):
+                args.append(a.get_path_prepared())
+            else:
+                raise TypeError(a)
+        return fn(*args)  # type: ignore
+
+    def get_tasks(self) -> list[AnyTask]:
+        tasks: list[AnyTask] = []
+        for a in self.args:
+            if isinstance(a, Task):
+                tasks.append(a)
+            elif isinstance(a, list):
+                tasks.extend(a)
+            elif isinstance(a, dict):
+                tasks.extend(a.values())
+        return tasks
+
+    def set_directory(self, path: Path) -> None:
+        placeholders = [a for a in self.args if isinstance(a, TaskDirectory)]
+        for ph in placeholders:
+            ph.path = path
+
+    @overload
+    def cons(self, task: Task[S]) -> TaskCont[Concatenate[S, P]]: ...
+    @overload
+    def cons(self, task: list[Task[S]]) -> TaskCont[Concatenate[list[S], P]]: ...
+    @overload
+    def cons(self, task: dict[K, Task[S]]) -> TaskCont[Concatenate[dict[K, S], P]]: ...
+    def cons(self, task: Any) -> TaskCont[...]:
+        return TaskCont(args=[task, *self.args])
+
+    @classmethod
+    def empty(cls) -> TaskCont[[]]:
+        return TaskCont([])
+
+
+@dataclass
+class Fulfillment(Generic[P, Q, T]):
+    cont: TaskCont[P]
+    fn: Callable[Q, T]
+
+    @classmethod
+    def init(cls, fn: Callable[Q, T]) -> Fulfillment[[], Q, T]:
+        return Fulfillment(cont=TaskCont.empty(), fn=fn)
+
+    def __call__(self: Fulfillment[P, P, T]) -> T:
+        return self.cont(self.fn)
+
+    def set_directory(self, path: Path) -> None:
+        self.cont.set_directory(path)
+
+    def get_tasks(self) -> list[AnyTask]:
+        return self.cont.get_tasks()
+
+
+@dataclass
+class requires(Generic[S]):
+    task: S
+
+    @overload
+    def __call__(self: requires[Task[U]], f: Callable[Q, T]) -> Fulfillment[[U], Q, T]: ...
+    @overload
+    def __call__(self: requires[list[Task[U]]], f: Callable[Q, T]) -> Fulfillment[[list[U]], Q, T]: ...
+    @overload
+    def __call__(self: requires[dict[K, Task[U]]], f: Callable[Q, T]) -> Fulfillment[[dict[K, U]], Q, T]: ...
+    @overload
+    def __call__(self: requires[TaskDirectory], f: Callable[Q, T]) -> Fulfillment[[Path], Q, T]: ...
+    @overload
+    def __call__(self: requires[Task[U]], f: Fulfillment[P, Q, T]) -> Fulfillment[Concatenate[U, P], Q, T]: ...
+    @overload
+    def __call__(self: requires[list[Task[U]]], f: Fulfillment[P, Q, T]) -> Fulfillment[Concatenate[list[U], P], Q, T]: ...
+    @overload
+    def __call__(self: requires[dict[K, Task[U]]], f: Fulfillment[P, Q, T]) -> Fulfillment[Concatenate[dict[K, U], P], Q, T]: ...
+    @overload
+    def __call__(self: requires[TaskDirectory], f: Fulfillment[P, Q, T]) -> Fulfillment[Concatenate[Path, P], Q, T]: ...
+    def __call__(self: requires[Any], f: Callable[Q, T] | Fulfillment[P, Q, T]) -> Fulfillment[[Any], Q, T] | Fulfillment[Concatenate[Any, P], Q, T]:
+        if isinstance(f, Fulfillment):
+            return Fulfillment(cont=f.cont.cons(self.task), fn=f.fn)
         else:
-            task_fn.set_directory(task.directory)
-        task_fn = task_fn.fn
-    return deps
+            return Fulfillment(TaskCont.empty().cons(self.task), f)
+
+
+def task(f: Runner[T]) -> Runner[T]:
+    return f
 
 
 @dataclass
@@ -648,8 +665,7 @@ def main(taskfile: Path, entrypoint: str, exec_type: str, max_workers: int, cach
             f'Taskfile `{taskfile}` should contain a task(factory) `{entrypoint}`, but found `{entrypoint_fn}`.'
     entrypoint_fn = cast(TaskFactory, entrypoint_fn)
     task = entrypoint_fn()
-    task.run()
-    print(task.directory)
+    print(task.run())
     return 0
 
 

@@ -1,11 +1,11 @@
 from pathlib import Path
-from checkpoint import requires_directory, task
+from checkpoint import requires, TaskDirectory, taskflow
 
 
-@task
+@taskflow
 def main():
     """ Example task """
-    @requires_directory
+    @requires(TaskDirectory())
     def __(path: Path) -> None:
         print('running')
         with open(path / 'test.txt', 'w') as f:

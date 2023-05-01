@@ -1,25 +1,24 @@
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from pdb import run
 from typing import Any
 import pytest
-from checkpoint import requires_directory, task, requires
+from checkpoint import taskflow, requires, TaskDirectory
 
 
-@task(max_concurrency=1)
+@taskflow(max_concurrency=1)
 def choose(n: int, k: int):
     if 0 < k < n:
         @requires([choose(n - 1, k - 1), choose(n - 1, k)])
-        def __(prev_two: list[int]):
+        def recurse(prev_two: list[int]) -> int:
             return sum(prev_two)
+        return recurse
 
     elif k == 0 or k == n:
-        def __() -> int:
+        def base_case() -> int:
             return 1
+        return base_case
 
     else:
         raise ValueError(f'{(n, k)}')
-    return __
 
 
 def test_graph():
@@ -58,21 +57,21 @@ def test_graph():
     assert ans == 20
     assert sum(info['stats'].values()) == 4
 
-@task
+@taskflow
 def task_a():
     def __():
         return None
     return __
 
 
-@task(compress_level=6)
+@taskflow(compress_level=6)
 def task_b():
     def __():
         return None
     return __
 
 
-@task(compress_level=6)
+@taskflow(compress_level=6)
 def task_c():
     @requires(task_a())
     @requires(task_b())
@@ -88,7 +87,7 @@ def test_multiple_tasks():
     assert task_c().run() == 42
 
 
-@task(compress_level=6)
+@taskflow(compress_level=6)
 def task_raise():
     @requires(task_a())
     @requires(task_b())
@@ -102,9 +101,9 @@ def test_raise():
         task_raise().run()
 
 
-@task
+@taskflow
 def create_file(content: str):
-    @requires_directory
+    @requires(TaskDirectory())
     def __(path: Path) -> str:
         outpath = path / 'test.txt'
         with open(outpath, 'w') as f:
@@ -112,7 +111,7 @@ def create_file(content: str):
         return str(outpath)
     return __
 
-@task
+@taskflow
 def greet_with_file(name):
     @requires(create_file(f'Hello, {name}!'))
     def __(path: str) -> str:
@@ -159,14 +158,14 @@ def test_requires_directory():
     check_output('world')                       # file recreated
 
 
-@task
+@taskflow
 def count_elem(x: list | dict):
     def __() -> int:
         return len(x)
     return __
 
 
-@task
+@taskflow
 def summarize_param(**params: Any):
     container_keys = [k for k in params if isinstance(params[k], (list, dict))]
 
