@@ -48,14 +48,15 @@ def choose(n: int, k: int):
         raise ValueError(f'{(n, k)}')
 
     # Return the inner function.
+    # Note that it represents the task and its entire upstream workflow.
     return __
 
-# Build the task graph to compute `choose(6, 3)`
-# and greedily consume it with `concurrent.futures.ProcessPoolExecutor`
-# (i.e., as parallel as possible).
+# To run the task, use the `run()` method.
+# It greedily executes all the necessary tasks with `concurrent.futures.ProcessPoolExecutor`
+# (i.e., as parallel as possible) and then spit the return value of the task.
 # The cache is stored at `{$CP_CACHE_DIR:-./.cache}/checkpoint/{module_name}.{function_name}/...`
 # and reused whenever available.
-ans = choose(6, 3).run()
+ans = choose(6, 3).run()  # `ans` should be 6 choose 3, which is 20.
 ```
 
 ### Deleting cache
