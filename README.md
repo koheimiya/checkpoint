@@ -15,30 +15,39 @@ pip install checkpoint-tool
 
 ### Basic usage
 
-Create task with decorators:
+Workflow is a directed acyclic graph (DAG) of tasks, and task is a unit of work represented with a nested function.
+Here is an example.
 ```python
 from checkpoint import task, requires
 
-# Mark a function as task
+# Define a task and **its upstream workflow** with a nested function with the decorator `task`.
+# The decorator creates the checkpoint for saving and reusing the result of the task.
 @task
 def choose(n: int, k: int):
+    """ Compute the binomial coefficient. """
     if 0 < k < n:
-        # Mark dependencies on other tasks;
-        # The return values of these tasks are passed as the arguments.
+        # Inside the outer function, we first declare prerequisite tasks with the decorator `requires`.
+        # In this example, we need `choose(n - 1, k - 1)` and `choose(n - 1, k)` to compute `choose(n, k)`.
+        # Calling these tasks recursively defines all the tasks we need to compute `choose(n, k)`,
+        # i.e., the entire upstream workflow.
         @requires(choose(n - 1, k - 1))
         @requires(choose(n - 1, k)) 
         def __(prev1: int, prev2: int) -> int:
-            # Main computation
+            # Define the main computation of the task with the inner function.
+            # The return values of the preerquisite tasks will be passed as the arguments, i.e.,
+            # `prev1` is the result of the task `choose(n - 1, k - 1)` and
+            # `prev2` is the result of the task `choose(n - 1, k)`.
             return prev1 + prev2
     elif k == 0 or k == n:
-        # Dependency can change according to the task parameters (`n` and `k`).
-        # Here, we need no dependency to compute `choose(n, 1)` or `choose(n, n)`.
+        # Prerequisite tasks can change according to the task parameters (here, `n` and `k`).
+        # The graph structure of the upstream workflow could thus dynamically change.
+        # In this example, we need no prerequisite to compute `choose(n, 1)` or `choose(n, n)`.
         def __() -> int:
             return 1
     else:
         raise ValueError(f'{(n, k)}')
 
-    # Return function that produces a value instead of the value itself.
+    # Return the inner function.
     return __
 
 # Build the task graph to compute `choose(6, 3)`
