@@ -560,14 +560,6 @@ class TaskGraph:
         return dict(out)
 
 
-def _group_nodes_by_queue(tasks: list[TaskKey]) -> dict[str, list[TaskKey]]:
-    out = defaultdict(list)
-    for x in tasks:
-        queue, _ = x
-        out[queue].append(x)
-    return dict(out)
-
-
 def run_task_graph(
         graph: TaskGraph,
         executor: Executor,
@@ -654,8 +646,9 @@ def _run_task(queue: str, task_data: bytes) -> tuple[str, TaskKey]:  # queue, (d
 @click.option('-t', '--exec-type', type=click.Choice(['process', 'thread']), default='process')
 @click.option('-w', '--max-workers', type=int, default=-1)
 @click.option('--cache-dir', type=Path, default=None)
+@click.option('--rate-limits', type=json.loads, default=None, help='JSON dictionary for rate_limits.')
 @click.option('-D', '--detect-source-change', is_flag=True, help='Automatically discard the cache per task once the source code (AST) is changed.')
-def main(taskfile: Path, entrypoint: str, exec_type: str, max_workers: int, cache_dir: Path | None, detect_source_change: bool):
+def main(taskfile: Path, entrypoint: str, exec_type: str, max_workers: int, cache_dir: Path | None, rate_limits: dict[str, Any] | None, detect_source_change: bool):
     # Set arguments as environment variables
     os.environ['CP_EXECUTOR'] = exec_type
     os.environ['CP_MAX_WORKERS'] = str(max_workers)
@@ -680,7 +673,7 @@ def main(taskfile: Path, entrypoint: str, exec_type: str, max_workers: int, cach
             f'Taskfile `{taskfile}` should contain a task(factory) `{entrypoint}`, but found `{entrypoint_fn}`.'
     entrypoint_fn = cast(TaskFactory, entrypoint_fn)
     task = entrypoint_fn()
-    print(task.run())
+    print(task.run(rate_limits=rate_limits))
     return 0
 
 

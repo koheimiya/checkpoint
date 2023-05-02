@@ -27,7 +27,7 @@ class PickleLoader(Generic[T_co]):
         return load(open(self.path, 'rb'))
 
 
-@task(queue='data')
+@task
 def load_data(name: str):
 
     @requires(TaskDirectory())
@@ -54,26 +54,13 @@ def preprocess_data(name: str, split_ratio: float, seed: int):
 
 
 @task
-def load_model(name: str):
-
-    @requires(TaskDirectory())
-    def __(path: Path) -> Loader[Model]:
-        model_path = path / f'{name}.bin'
-        # Download the model to model_path ...
-        return PickleLoader(Model('<initial model>'), model_path)
-    return __
-
-
-@task
-def train_model(preprocessed_data: Task[dict[str, Loader[Data]]], initial_model: Task[Loader[Model]], train_config: dict, seed: int):
+def train_model(preprocessed_data: Task[dict[str, Loader[Data]]], train_config: dict, seed: int):
     
     @requires(TaskDirectory())
     @requires(preprocessed_data)
-    @requires(initial_model)
-    def __(path: Path, data_dict: dict[str, Loader[Data]], model_loader: Loader[Model]) -> Loader[Model]:
+    def __(path: Path, data_dict: dict[str, Loader[Data]]) -> Loader[Model]:
         train_data = data_dict['train'].load()
         valid_data = data_dict['valid'].load()
-        model = model_loader.load()
         # Train model with data and save it to trained_path ...
         trained_path = path / f'trained.bin'
         return PickleLoader(Model('<trained model>'), trained_path)
@@ -100,8 +87,7 @@ def main():
     tasks: list[Task[dict]] = []
     for i in range(10):
         data = preprocess_data('mydata', split_ratio=.8, seed=i)
-        model = load_model('mymodel')
-        trained = train_model(preprocessed_data=data, initial_model=model, train_config={'lr': .01}, seed=i)
+        trained = train_model(preprocessed_data=data, train_config={'lr': .01}, seed=i)
         result = test_model(preprocessed_data=data, trained_model=trained)
         tasks.append(result)
 
