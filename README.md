@@ -67,50 +67,83 @@ choose.clear()
 
 ### Advanced IO
 
-More complex inputs can be used as long as it is JSON serializable:
+More complex inputs can be passed as long as it is JSON serializable:
 ```python
 @task
-def task1(**param1):
+def f1(**param1):
     ...
 
 @task
-def task2(**param2):
+def f2(**param2):
     ...
 
 @task
-def task3(json_params):
-    @requires(task1(**json_params['param1']))
-    @requires(task2(**json_params['param2']))
-    def __(result1, result2):
+def f3(json_params):
+    @requires(f1(**json_params['param1']))
+    @requires(f2(**json_params['param2']))
+    def __(obj1, obj2):
         ...
     return __
 
-result = task3({'param1': { ... }, 'param2': { ... }}).run()
+result = f3({'param1': { ... }, 'param2': { ... }}).run()
+```
+
+Even more complex inputs can be passed as `task`s:
+```python
+from checkpoint import Task
+
+Dataset = ...  # Some complex data structure
+Model = ...    # Some complex data structure
+
+@task
+def load_dataset():
+    def __() -> Dataset:
+        ...
+    return __
+
+@task
+def train_model(dataset_task: Task[Dataset]):
+    @requires(dataset_task)
+    def __(dataset) -> Model:
+        ...
+    return __
+    
+@task
+def score_model(dataset_task: Task[Dataset], model_task: Task[Model]):
+    @requires(dataset_task)
+    @requires(model_task)
+    def __(dataset, model) -> float:
+        ...
+    return __
+
+
+dataset_task = load_dataset()
+model_task = train_model(dataset)
+score_task = score_model(dataset, model)
+print(score_task.run())
 ```
 
 Task dependencies can be specified with lists and dicts:
 ```python
 @task
-def task3(json_params):
-    @requires([task1(p) for p in json_params['my_param_list']])
-    @requires({k: task2(p) for k, p in json_params['my_param_dict'].items()})
-    def __(result_list, result_dict):
+def summarize_scores(scores_tasks: dict[str, Task[float]]):
+
+    @requires(score_tasks)
+    def __(score_dict):
         ...
     return __
-
-result = task3({'my_param_list': [ ... ], 'my_param_dict': { ... }}).run()
 ```
 
 Large outputs can be stored with compression via `zlib`:
 ```python
 @task(compress_level=-1)
-def large_output_task(*args, **kwargs):
+def large_output_task():
     ...
 ```
 
 ### Data directories
 
-Use `TaskDirectory` to create a fresh directory dedicated to each task. The contents of the directory are cleared at each task call and persist until `clear`ed.
+Use `TaskDirectory` to create a fresh directory dedicated to each task. The contents of the directory are cleared at each task call and persist until the task is `clear`ed.
 ```python
 from pathlib import Path
 from checkpoint import TaskDirectory
