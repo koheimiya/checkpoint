@@ -180,11 +180,23 @@ my_task().run(executor=ProcessPoolExecutor(max_workers=2))
 my_task().run(executor=ThreadPoolExecutor())
 ```
 
-One can also control the concurrency at a task level:
+One can also control the concurrency at a task/queue level:
 ```python
-@task(max_concurrency=2)
-def resource_intensive_task(*args, **kwargs):
+# Task-level concurrency limit
+my_task().run(rate_limit={my_task.queue: 2})
+
+# Queue-level concurrency limit
+@task(queue='gpu')
+def task_using_gpu():
     ...
+
+@task(queue='gpu')
+def another_task_using_gpu():
+    ...
+
+# ...
+some_downstream_task.run(rate_limit={'gpu': 1})
+
 ```
 
 ### Commandline tool
