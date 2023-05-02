@@ -27,7 +27,7 @@ class PickleLoader(Generic[T_co]):
         return load(open(self.path, 'rb'))
 
 
-@task
+@task(queue='data')
 def load_data(name: str):
 
     @requires(TaskDirectory())

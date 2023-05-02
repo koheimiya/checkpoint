@@ -1,9 +1,12 @@
 """ A lightweight workflow management tool written in pure Python.
 
-TODO:
-    - Task change detection
-        - via variable-anonymized AST
-    - Priority-based scheduling
+Key features:
+    - Intuitive and flexible task graph creation with small boilerblates.
+    - Automatic cache/data management (source code change detection, cache/data dependency tracking).
+    - Task queue with rate limits.
+
+Limitations:
+    - No priority-based scheduling.
 """
 from __future__ import annotations
 from typing import Callable, ClassVar, Generic, NewType, TypeVar, Any, cast, overload
@@ -14,7 +17,6 @@ from datetime import datetime
 from pathlib import Path
 from concurrent.futures import ProcessPoolExecutor, Future, ThreadPoolExecutor, wait, FIRST_COMPLETED, Executor
 from functools import wraps
-import importlib.util
 import ast
 import os
 import sys
@@ -223,7 +225,7 @@ class TaskSkeleton(Generic[R]):
         return db.load(self.key)
 
     def load_content(self, loader: RunnerFactory[[], R]) -> Task[R]:
-        is_root = not self._register
+        # is_root = not self._register
 
         key = self.to_tuple()
         runner = self._register.get(key, None)
@@ -232,8 +234,8 @@ class TaskSkeleton(Generic[R]):
             self._register[key] = runner
         task = Task(task_factory=self.task_factory, key=self.key, runner=runner)
 
-        if is_root:
-            self._register.clear()
+        # if is_root:
+        #     self._register.clear()
         return task
 
 
@@ -247,13 +249,19 @@ class Task(TaskSkeleton[R]):
         out = self.runner()
         db.save(self.key, out)
 
-    def run(self, *, executor: Executor | None = None, max_workers: int | None = None) -> R:
-        return self.run_with_info(executor=executor, max_workers=max_workers)[0]
+    def run(
+            self, *,
+            executor: Executor | None = None,
+            max_workers: int | None = None,
+            rate_limits: dict[str, int] | None = None
+            ) -> R:
+        return self.run_with_info(executor=executor, max_workers=max_workers, rate_limits=rate_limits)[0]
 
     def run_with_info(
             self, *,
             executor: Executor | None = None,
             max_workers: int | None = None,
+            rate_limits: dict[str, int] | None = None,
             dump_generations: bool = False
             ) -> tuple[R, dict[str, Any]]:
         graph = TaskGraph.build_from(self)
@@ -261,7 +269,7 @@ class Task(TaskSkeleton[R]):
             executor = Context.get_executor(max_workers=max_workers)
         else:
             assert max_workers is None
-        info = run_task_graph(graph=graph, executor=executor, dump_generations=dump_generations)
+        info = run_task_graph(graph=graph, executor=executor, rate_limits=rate_limits, dump_graphs=dump_generations)
         return self.get_result(), info
 
 
@@ -269,7 +277,7 @@ class Task(TaskSkeleton[R]):
 class TaskFactory(Generic[P, R]):
     runner_factory: RunnerFactory[P, R]
     db: Database
-    max_concurrency: int | None
+    queue: str
     source_timestamp: datetime
 
     def get_db_name(self) -> str:
@@ -287,7 +295,7 @@ class TaskFactory(Generic[P, R]):
 @overload
 def task(fn: RunnerFactory[P, R]) -> TaskFactory[P, R]: ...
 @overload
-def task(*, compress_level: int = 0, max_concurrency: int | None = None) -> Callable[[RunnerFactory[P, R]], TaskFactory[P, R]]: ...
+def task(*, compress_level: int = 0, queue: str | None = None) -> Callable[[RunnerFactory[P, R]], TaskFactory[P, R]]: ...
 def task(*args, **kwargs) -> Any:
     if args:
         fn, = args
@@ -297,13 +305,14 @@ def task(*args, **kwargs) -> Any:
 
 
 def _task(
-        *, compress_level: int = 0, max_concurrency: int | None = None
+        *, compress_level: int = 0, queue: str | None = None
         ) -> Callable[[RunnerFactory[P, R]], TaskFactory[P, R]]:
     """ Convert a runner factory into a task factory. """
 
     def decorator(fn: RunnerFactory[P, R]) -> TaskFactory[P, R]:
         name = _serialize_function(fn)
         db = Database.make(name=name, compress_level=compress_level)
+        _queue = f'<{name}>' if queue is None else queue
 
         source = inspect.getsource(fn)
         formatted_source = ast.unparse(ast.parse(source))
@@ -311,7 +320,7 @@ def _task(
 
         return wraps(fn)(TaskFactory(
             runner_factory=fn, db=db,
-            max_concurrency=max_concurrency,
+            queue=_queue,
             source_timestamp=source_timestamp
             ))
     return decorator
@@ -345,7 +354,7 @@ AnyTask = Task[Any]
 
 
 def get_prerequisite_tasks(task: AnyTask) -> list[AnyTask]:
-    if isinstance(task.runner, Fulfillment):
+    if isinstance(task.runner, PartialRunner):
         task.runner.set_directory(task.directory)
         return task.runner.get_tasks()
     else:
@@ -365,7 +374,7 @@ class TaskDirectory:
 
 
 @dataclass
-class TaskCont(Generic[P]):
+class TaskArgs(Generic[P]):
     args: list[AnyTask | list[AnyTask] | dict[Any, AnyTask] | TaskDirectory]
 
     def __call__(self, fn: Callable[P, T]) -> T:
@@ -400,29 +409,29 @@ class TaskCont(Generic[P]):
             ph.path = path
 
     @overload
-    def cons(self, task: Task[S]) -> TaskCont[Concatenate[S, P]]: ...
+    def cons(self, task: Task[S]) -> TaskArgs[Concatenate[S, P]]: ...
     @overload
-    def cons(self, task: list[Task[S]]) -> TaskCont[Concatenate[list[S], P]]: ...
+    def cons(self, task: list[Task[S]]) -> TaskArgs[Concatenate[list[S], P]]: ...
     @overload
-    def cons(self, task: dict[K, Task[S]]) -> TaskCont[Concatenate[dict[K, S], P]]: ...
-    def cons(self, task: Any) -> TaskCont[...]:
-        return TaskCont(args=[task, *self.args])
+    def cons(self, task: dict[K, Task[S]]) -> TaskArgs[Concatenate[dict[K, S], P]]: ...
+    def cons(self, task: Any) -> TaskArgs[...]:
+        return TaskArgs(args=[task, *self.args])
 
     @classmethod
-    def empty(cls) -> TaskCont[[]]:
-        return TaskCont([])
+    def empty(cls) -> TaskArgs[[]]:
+        return TaskArgs([])
 
 
 @dataclass
-class Fulfillment(Generic[P, Q, T]):
-    cont: TaskCont[P]
+class PartialRunner(Generic[P, Q, T]):
+    cont: TaskArgs[P]
     fn: Callable[Q, T]
 
     @classmethod
-    def init(cls, fn: Callable[Q, T]) -> Fulfillment[[], Q, T]:
-        return Fulfillment(cont=TaskCont.empty(), fn=fn)
+    def init(cls, fn: Callable[Q, T]) -> PartialRunner[[], Q, T]:
+        return PartialRunner(cont=TaskArgs.empty(), fn=fn)
 
-    def __call__(self: Fulfillment[P, P, T]) -> T:
+    def __call__(self: PartialRunner[P, P, T]) -> T:
         return self.cont(self.fn)
 
     def set_directory(self, path: Path) -> None:
@@ -437,26 +446,26 @@ class requires(Generic[S]):
     task: S
 
     @overload
-    def __call__(self: requires[Task[U]], f: Callable[Q, T]) -> Fulfillment[[U], Q, T]: ...
+    def __call__(self: requires[Task[U]], f: Callable[Q, T]) -> PartialRunner[[U], Q, T]: ...
     @overload
-    def __call__(self: requires[list[Task[U]]], f: Callable[Q, T]) -> Fulfillment[[list[U]], Q, T]: ...
+    def __call__(self: requires[list[Task[U]]], f: Callable[Q, T]) -> PartialRunner[[list[U]], Q, T]: ...
     @overload
-    def __call__(self: requires[dict[K, Task[U]]], f: Callable[Q, T]) -> Fulfillment[[dict[K, U]], Q, T]: ...
+    def __call__(self: requires[dict[K, Task[U]]], f: Callable[Q, T]) -> PartialRunner[[dict[K, U]], Q, T]: ...
     @overload
-    def __call__(self: requires[TaskDirectory], f: Callable[Q, T]) -> Fulfillment[[Path], Q, T]: ...
+    def __call__(self: requires[TaskDirectory], f: Callable[Q, T]) -> PartialRunner[[Path], Q, T]: ...
     @overload
-    def __call__(self: requires[Task[U]], f: Fulfillment[P, Q, T]) -> Fulfillment[Concatenate[U, P], Q, T]: ...
+    def __call__(self: requires[Task[U]], f: PartialRunner[P, Q, T]) -> PartialRunner[Concatenate[U, P], Q, T]: ...
     @overload
-    def __call__(self: requires[list[Task[U]]], f: Fulfillment[P, Q, T]) -> Fulfillment[Concatenate[list[U], P], Q, T]: ...
+    def __call__(self: requires[list[Task[U]]], f: PartialRunner[P, Q, T]) -> PartialRunner[Concatenate[list[U], P], Q, T]: ...
     @overload
-    def __call__(self: requires[dict[K, Task[U]]], f: Fulfillment[P, Q, T]) -> Fulfillment[Concatenate[dict[K, U], P], Q, T]: ...
+    def __call__(self: requires[dict[K, Task[U]]], f: PartialRunner[P, Q, T]) -> PartialRunner[Concatenate[dict[K, U], P], Q, T]: ...
     @overload
-    def __call__(self: requires[TaskDirectory], f: Fulfillment[P, Q, T]) -> Fulfillment[Concatenate[Path, P], Q, T]: ...
-    def __call__(self: requires[Any], f: Callable[Q, T] | Fulfillment[P, Q, T]) -> Fulfillment[[Any], Q, T] | Fulfillment[Concatenate[Any, P], Q, T]:
-        if isinstance(f, Fulfillment):
-            return Fulfillment(cont=f.cont.cons(self.task), fn=f.fn)
+    def __call__(self: requires[TaskDirectory], f: PartialRunner[P, Q, T]) -> PartialRunner[Concatenate[Path, P], Q, T]: ...
+    def __call__(self: requires[Any], f: Callable[Q, T] | PartialRunner[P, Q, T]) -> PartialRunner[[Any], Q, T] | PartialRunner[Concatenate[Any, P], Q, T]:
+        if isinstance(f, PartialRunner):
+            return PartialRunner(cont=f.cont.cons(self.task), fn=f.fn)
         else:
-            return Fulfillment(TaskCont.empty().cons(self.task), f)
+            return PartialRunner(TaskArgs.empty().cons(self.task), f)
 
 
 @dataclass
@@ -521,10 +530,17 @@ class TaskGraph:
     def get_task_factories(self) -> dict[str, TaskFactory[..., Any]]:
         return dict((path, attr['task'].task_factory) for (path, _), attr in self.G.nodes.items())
 
-    def get_initial_tasks(self) -> list[TaskKey]:
-        return [x for x in self.G if self.G.in_degree(x) == 0]
+    def get_initial_tasks(self) -> dict[str, list[TaskKey]]:
+        leaves = [x for x in self.G if self.G.in_degree(x) == 0]
+        return self._group_by_queue(leaves)
 
-    def pop_with_new_leaves(self, x: TaskKey, disallow_non_leaf: bool = True) -> list[TaskKey]:
+    def _group_by_queue(self, nodes: list[TaskKey]) -> dict[str, list[TaskKey]]:
+        out = defaultdict(list)
+        for x in nodes:
+            out[self.get_task(x).task_factory.queue].append(x)
+        return out
+
+    def pop_with_new_leaves(self, x: TaskKey, disallow_non_leaf: bool = True) -> dict[str, list[TaskKey]]:
         if disallow_non_leaf:
             assert not list(self.G.predecessors(x))
 
@@ -534,9 +550,9 @@ class TaskGraph:
                 new_leaves.append(y)
 
         self.G.remove_node(x)
-        return new_leaves
+        return self._group_by_queue(new_leaves)
 
-    def get_grouped_nodes(self) -> dict[str, list[Json]]:
+    def get_nodes_by_task(self) -> dict[str, list[Json]]:
         out: dict[str, list[Json]] = defaultdict(list)
         for x in self.G:
             path, args = x
@@ -544,33 +560,34 @@ class TaskGraph:
         return dict(out)
 
 
-def _group_nodes_by_db(tasks: list[TaskKey]) -> dict[str, list[TaskKey]]:
+def _group_nodes_by_queue(tasks: list[TaskKey]) -> dict[str, list[TaskKey]]:
     out = defaultdict(list)
     for x in tasks:
-        db, _ = x
-        out[db].append(x)
+        queue, _ = x
+        out[queue].append(x)
     return dict(out)
 
 
-def run_task_graph(graph: TaskGraph, executor: Executor, dump_generations: bool = False) -> dict[str, Any]:
+def run_task_graph(
+        graph: TaskGraph,
+        executor: Executor,
+        rate_limits: dict[str, int] | None = None,
+        dump_graphs: bool = False,
+        ) -> dict[str, Any]:
     """ Consume task graph concurrently.
     """
-    stats = {k: len(args) for k, args in graph.get_grouped_nodes().items()}
+    stats = {k: len(args) for k, args in graph.get_nodes_by_task().items()}
     LOGGER.info(f'Following tasks will be called: {stats}')
     info = {'stats': stats, 'generations': []}
 
     # Read concurrency budgets
-    budgets: dict[str, int] = {}
-    occupied: dict[str, int] = {}
-    for path, fac in graph.get_task_factories().items():
-        mc = fac.max_concurrency
-        if mc is not None:
-            budgets[path] = mc
-            occupied[path] = 0
+    if rate_limits is None:
+        rate_limits = {}
+    occupied = {k: 0 for k in rate_limits}
 
     # Execute tasks
-    standby = _group_nodes_by_db(graph.get_initial_tasks())
-    in_process: set[Future[TaskKey]] = set()
+    standby = graph.get_initial_tasks()
+    in_process: set[Future[tuple[str, TaskKey]]] = set()
     with executor as executor:
         while standby or in_process:
             # Log some stats
@@ -579,23 +596,23 @@ def run_task_graph(graph: TaskGraph, executor: Executor, dump_generations: bool 
                     f'standby: {len(standby)}, '
                     f'in_process: {len(in_process)}'
                     )
-            if dump_generations:
-                info['generations'].append(graph.get_grouped_nodes())
+            if dump_graphs:
+                info['generations'].append(graph.get_nodes_by_task())
 
             # Submit all leaf tasks
             leftover: dict[str, list[TaskKey]] = {}
-            for path, keys in standby.items():
-                if path in budgets:
-                    free = budgets[path] - occupied[path]
+            for queue, keys in standby.items():
+                if queue in rate_limits:
+                    free = rate_limits[queue] - occupied[queue]
                     to_submit, to_hold = keys[:free], keys[free:]
-                    occupied[path] += len(to_submit)
+                    occupied[queue] += len(to_submit)
                     if to_hold:
-                        leftover[path] = to_hold
+                        leftover[queue] = to_hold
                 else:
                     to_submit = keys
 
                 for key in to_submit:
-                    future = executor.submit(_run_task, cloudpickle.dumps(graph.get_task(key)))
+                    future = executor.submit(_run_task, queue, cloudpickle.dumps(graph.get_task(key)))
                     in_process.add(future)
 
             # Wait for the first tasks to complete
@@ -604,20 +621,19 @@ def run_task_graph(graph: TaskGraph, executor: Executor, dump_generations: bool 
             # Update graph
             standby = defaultdict(list, leftover)
             for done_future in done:
-                x_done = done_future.result()
+                queue_done, x_done = done_future.result()
 
                 # Update occupied
-                path = x_done[0]
-                if path in occupied:
-                    occupied[path] -= 1
-                    assert occupied[path] >= 0
+                if queue_done in occupied:
+                    occupied[queue_done] -= 1
+                    assert occupied[queue_done] >= 0
 
                 # Remove node from graph
                 ys = graph.pop_with_new_leaves(x_done)
 
                 # Update standby
-                for y in ys:
-                    standby[y[0]].append(y)
+                for queue, task in ys.items():
+                    standby[queue].extend(task)
 
     # Sanity check
     assert graph.size == 0, f'Graph is not empty. Should not happen.'
@@ -625,11 +641,11 @@ def run_task_graph(graph: TaskGraph, executor: Executor, dump_generations: bool 
     return info
 
 
-def _run_task(task_data: bytes) -> tuple[str, Json]:
+def _run_task(queue: str, task_data: bytes) -> tuple[str, TaskKey]:  # queue, (dbname, key)
     task = cloudpickle.loads(task_data)
     assert isinstance(task, Task)
     task.set_result()
-    return task.to_tuple()
+    return queue, task.to_tuple()
 
 
 @click.command
@@ -650,6 +666,7 @@ def main(taskfile: Path, entrypoint: str, exec_type: str, max_workers: int, cach
     module_name = taskfile.with_suffix('').name
     sys.path.append(str(taskfile.parent))
     module = __import__(module_name)
+    # import importlib.util
     # spec = importlib.util.spec_from_file_location(module_name, taskfile)
     # assert spec is not None
     # assert spec.loader is not None

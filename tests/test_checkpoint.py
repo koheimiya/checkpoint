@@ -4,7 +4,7 @@ import pytest
 from checkpoint import task, requires, TaskDirectory
 
 
-@task(max_concurrency=1)
+@task
 def choose(n: int, k: int):
     if 0 < k < n:
         @requires([choose(n - 1, k - 1), choose(n - 1, k)])
@@ -33,7 +33,7 @@ def test_graph():
     6...x
     """
     choose.clear()
-    ans, info = choose(6, 3).run_with_info()
+    ans, info = choose(6, 3).run_with_info(rate_limits={choose.queue: 2})
     assert ans == 20
     assert sum(info['stats'].values()) == 15
 
