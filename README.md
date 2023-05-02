@@ -1,6 +1,6 @@
 # Checkpoint-tool
 
-A lightweight workflow management tool written in pure Python.
+A lightweight workflow building/execution/management tool written in pure Python.
 
 Internally, it depends on `DiskCache`, `cloudpickle` `networkx` and `concurrent.futures`.
 
@@ -20,20 +20,21 @@ Here is an example.
 ```python
 from checkpoint import task, requires
 
-# Define a task and **its upstream workflow** with a nested function with the decorator `task`.
-# The decorator creates the checkpoint for saving and reusing the result of the task.
+# Define a function that returns a task and **its entire upstream workflow** by
+# decorating a nested function with the decorator `task`.
 @task
 def choose(n: int, k: int):
     """ Compute the binomial coefficient. """
     if 0 < k < n:
         # Inside the outer function, we first declare prerequisite tasks with the decorator `requires`.
         # In this example, we need `choose(n - 1, k - 1)` and `choose(n - 1, k)` to compute `choose(n, k)`.
-        # Calling these tasks recursively defines all the tasks we need to compute `choose(n, k)`,
+        # This recursively defines all the tasks we need to compute `choose(n, k)`,
         # i.e., the entire upstream workflow.
         @requires(choose(n - 1, k - 1))
         @requires(choose(n - 1, k)) 
         def __(prev1: int, prev2: int) -> int:
-            # Define the main computation of the task with the inner function.
+            # Define the main computation of the task with the inner function,
+            # which is delayed until the task is run.
             # The return values of the preerquisite tasks will be passed as the arguments, i.e.,
             # `prev1` is the result of the task `choose(n - 1, k - 1)` and
             # `prev2` is the result of the task `choose(n - 1, k)`.
@@ -51,12 +52,14 @@ def choose(n: int, k: int):
     # Note that it represents the task and its entire upstream workflow.
     return __
 
-# To run the task, use the `run()` method.
-# It greedily executes all the necessary tasks with `concurrent.futures.ProcessPoolExecutor`
-# (i.e., as parallel as possible) and then spit the return value of the task.
-# The cache is stored at `{$CP_CACHE_DIR:-./.cache}/checkpoint/{module_name}.{function_name}/...`
-# and reused whenever available.
+# To run tasks, use the `run()` method.
 ans = choose(6, 3).run()  # `ans` should be 6 choose 3, which is 20.
+
+# It greedily executes all the necessary tasks as parallel as possible
+# and then spits out the return value of the task on which we call `run()`.
+# The return values of the intermediate tasks are cached at
+# `{$CP_CACHE_DIR:-./.cache}/checkpoint/{module_name}.{function_name}/...`
+# and reused on the fly whenever possible.
 ```
 
 ### Deleting cache
