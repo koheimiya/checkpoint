@@ -1,7 +1,7 @@
 from pathlib import Path
 from typing import Any
 import pytest
-from checkpoint import task, requires, TaskDirectory
+from checkpoint.checkpoint_legacy import task, requires, TaskDirectory
 
 
 @task

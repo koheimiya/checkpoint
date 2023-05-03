@@ -195,10 +195,6 @@ my_task().run(executor=ThreadPoolExecutor())
 
 One can also control the concurrency at a task/queue level:
 ```python
-# Task-level concurrency limit
-my_task().run(rate_limit={my_task.queue: 2})
-
-# Queue-level concurrency limit
 @task(queue='gpu')
 def task_using_gpu():
     ...
@@ -207,8 +203,8 @@ def task_using_gpu():
 def another_task_using_gpu():
     ...
 
-# ...
-some_downstream_task.run(rate_limit={'gpu': 1})
+some_downstream_task.run(rate_limits={'gpu': 1})  # Queue-level concurrency control
+some_downstream_task.run(rate_limits={yet_another_task.queue: 1})  # Task-level concurrency control
 
 ```
 

@@ -527,9 +527,6 @@ class TaskGraph:
         TR.add_nodes_from(self.G.nodes(data=True))
         self.G = TR
 
-    def get_task_factories(self) -> dict[str, TaskFactory[..., Any]]:
-        return dict((path, attr['task'].task_factory) for (path, _), attr in self.G.nodes.items())
-
     def get_initial_tasks(self) -> dict[str, list[TaskKey]]:
         leaves = [x for x in self.G if self.G.in_degree(x) == 0]
         return self._group_by_queue(leaves)
