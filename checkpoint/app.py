@@ -7,7 +7,7 @@ import json
 
 import click
 
-from .task import TaskFactory
+from .task import BaseTask
 
 
 @click.command
@@ -38,8 +38,8 @@ def main(taskfile: Path, entrypoint: str, exec_type: str, max_workers: int, cach
     # spec.loader.exec_module(module)
 
     # Run the main task
-    entrypoint_fn = getattr(module, entrypoint, None)
-    assert isinstance(entrypoint_fn, TaskFactory), \
+    entrypoint_fn = getattr(module, entrypoint)
+    assert issubclass(entrypoint_fn, BaseTask), \
             f'Taskfile `{taskfile}` should contain a task(factory) `{entrypoint}`, but found `{entrypoint_fn}`.'
     task = entrypoint_fn()
     task.run_with_info(rate_limits=rate_limits)
