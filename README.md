@@ -223,3 +223,11 @@ def main():
 ```
 The command runs the `main` task and stores the cache right next to `taskfile.py` as `.cache/checkpoint/...`.
 Please refer to `python -m checkpoint --help` for more info.
+
+
+
+## TODO
+ - [ ] Class-decorator based implementation (`requires` descriptor)
+ - [ ] Simple visualizers
+    - [ ] Task-wise progressbar
+    - [ ] Graph visualizer
