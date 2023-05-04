@@ -209,8 +209,8 @@ class TaskUsingGPU(Task, queue='gpu'):
 class AnotherTaskUsingGPU(Task, queue='gpu'):
     ...
 
-SomeDownstreamTask.run(rate_limits={'gpu': 1})  # Queue-level concurrency control
-SomeDownstreamTask.run(rate_limits={MemoryIntensiveTask.task__queue: 1})  # Task-level concurrency control
+SomeDownstreamTask().run(rate_limits={'gpu': 1})  # Queue-level concurrency control
+SomeDownstreamTask().run(rate_limits={MemoryIntensiveTask.task__queue: 1})  # Task-level concurrency control
 
 ```
 
