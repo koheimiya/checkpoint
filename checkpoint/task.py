@@ -1,6 +1,6 @@
 from __future__ import annotations
 from abc import ABC, abstractmethod
-from typing import Callable, Generic, Protocol, Self, Sequence, Type, TypeVar, Any, cast, overload
+from typing import Callable, Generic, Mapping, Protocol, Self, Sequence, Type, TypeVar, Any, cast, overload
 from typing_extensions import ParamSpec
 from dataclasses import dataclass
 from datetime import datetime
@@ -38,14 +38,16 @@ class Task(Generic[P, R], ABC):
     task__instance_registry: dict[Json, Self]
     task__queue: str
     task__source_timestamp: datetime
-    task__compress_level: int = 0
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
+        compress_level = kwargs.pop('compress_level', 0)
+        queue = kwargs.pop('queue', None)
         super().__init_subclass__(**kwargs)
+
         cls.task__subclass = cls
         cls.task__name = _serialize_function(cls)
-        cls.task__db = Database.make(name=cls.task__name, compress_level=cls.task__compress_level)
-        cls.task__queue = f'<{cls.task__name}>'
+        cls.task__db = Database.make(name=cls.task__name, compress_level=compress_level)
+        cls.task__queue = queue if queue is not None else f'<{cls.task__name}>'
         cls.task__instance_registry = {}
 
         source = inspect.getsource(cls)
@@ -53,7 +55,7 @@ class Task(Generic[P, R], ABC):
         cls.task__source_timestamp = cls.task__db.update_source_if_necessary(formatted_source)
 
     def __init__(self, *args: P.args, **kwargs: P.kwargs) -> None:
-        self.arg_key = _serialize_arguments(self.task__subclass, *args, **kwargs)
+        self.arg_key = _serialize_arguments(self.init, *args, **kwargs)
         task_instance = self.task__instance_registry.get(self.arg_key, None)
         if task_instance is None:
             self.init(*args, **kwargs)
@@ -61,8 +63,8 @@ class Task(Generic[P, R], ABC):
         else:
             self.real_instance = task_instance
 
-    @abstractmethod
-    def init(self, *args: P.args, **kwargs: P.kwargs) -> None: ...
+    def init(self, *args: P.args, **kwargs: P.kwargs) -> None:
+        pass
 
     @abstractmethod
     def main(self) -> R: ...
@@ -77,8 +79,14 @@ class Task(Generic[P, R], ABC):
         return os.path.join(*[id_[i:i+255] for i in range(0, len(id_), 255)])
 
     @property
-    def directory(self) -> Path:
+    def directory_uninit(self) -> Path:
         return Path(self.task__db.data_directory) / self._relative_path
+
+    @property
+    def directory(self) -> Path:
+        out = self.directory_uninit
+        out.mkdir(exist_ok=True)
+        return out
 
     @classmethod
     def clear_all(cls) -> None:
@@ -117,18 +125,10 @@ class Task(Generic[P, R], ABC):
 
     def set_result(self) -> None:
         db = self.task__db
-        self._get_directory_prepared_if_necessary()
-        out = self.real_instance.main()
-        db.save(self.arg_key, out)
-
-    def _get_directory_prepared_if_necessary(self) -> None:
-        for _, v in inspect.getmembers(self.task__subclass):
-            if isinstance(v, Directory):
-                v.path = self.directory
-
         if self.directory.exists():
             shutil.rmtree(self.directory)
-        self.directory.mkdir()
+        out = self.real_instance.main()
+        db.save(self.arg_key, out)
 
     def get_result(self) -> R:
         return self.task__db.load(self.arg_key)
@@ -172,9 +172,9 @@ class TaskTypeProtocol(Protocol[P, R]):
     def main(self) -> R: ...
 
 
-def infer_task_type(cls: Type[TaskTypeProtocol[P, R]]) -> Callable[P, Task[P, R]]:
+def infer_task_type(cls: Type[TaskTypeProtocol[P, R]]) -> Type[Task[P, R]]:
     assert issubclass(cls, Task), f'{cls} must inherit from {Task} to infer task type.'
-    return cast(Callable[P, Task[P, R]], cls)
+    return cast(Type[Task[P, R]], cls)
 
 
 def _serialize_function(fn: Callable[..., Any]) -> str:
@@ -215,8 +215,6 @@ class Req(Generic[T, R]):
     def __get__(self: Req[list[TaskLike[U]], list[U]], obj: Task[..., Any], _=None) -> list[U]: ...
     @overload
     def __get__(self: Req[dict[K, TaskLike[U]], dict[K, U]], obj: Task[..., Any], _=None) -> dict[K, U]: ...
-    @overload
-    def __get__(self: Req[Directory, Path], obj: Task[..., Any], _=None) -> Path: ...
     def __get__(self, obj: Task[..., Any], _=None) -> Any:
         task = getattr(obj, self.private_name)
         if isinstance(task, Task):
@@ -225,8 +223,6 @@ class Req(Generic[T, R]):
             return [t.get_result() for t in task]
         elif isinstance(task, dict):
             return {k: v.get_result() for k, v in task.items()}
-        elif isinstance(task, Directory):
-            return task.get_path_prepared()
         elif isinstance(task, Const):
             return task.value
         else:
@@ -239,25 +235,11 @@ class Req(Generic[T, R]):
         elif isinstance(task, list):
             return task
         elif isinstance(task, dict):
-            return [v.get_result() for _, v in task.items()]
-        elif isinstance(task, Directory):
-            return []
+            return list(task.values())
         elif isinstance(task, Const):
             return []
         else:
             raise TypeError(f'Unsupported requirement type: {type(task)}')
-
-
-@dataclass
-class Directory:
-    path: Path | None = None
-
-    def get_path_prepared(self) -> Path:
-        assert self.path is not None, 'Should never happen.'
-        if self.path.exists():
-            shutil.rmtree(self.path)
-        self.path.mkdir()
-        return self.path
 
 
 @dataclass
@@ -272,6 +254,5 @@ TaskLike = Task[..., U] | Const[U]
 
 
 Requires = Req[TaskLike[U], U]
-RequiresList = Req[list[TaskLike[U]], list[U]]
-RequiresDict = Req[dict[K, TaskLike[U]], dict[K, U]]
-RequiresDirectory = Req[Directory, Path]
+RequiresList = Req[Sequence[TaskLike[U]], list[U]]
+RequiresDict = Req[Mapping[K, TaskLike[U]], dict[K, U]]

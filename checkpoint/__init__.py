@@ -12,11 +12,11 @@ import sys
 
 from .app import main
 from .types import Context
-from .task import Task
+from .task import infer_task_type, Task, Req, Requires, RequiresList, RequiresDict, Const
 
 
 __EXPORT__ = [
-        Task,
+        infer_task_type, Task, Req, Requires, RequiresList, RequiresDict, Const,
         Context
         ]
 
