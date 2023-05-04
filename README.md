@@ -36,7 +36,7 @@ class Choose(Task):
     def init(self, n: int, k: int):
         # This method is optional.
         # The prerequisite tasks and the other instance attributes are prepared here.
-        # It thus recursively defines all the tasks we need to compute this task,
+        # It thus recursively defines all the tasks we need to run this task,
         # i.e., the entire upstream workflow.
         
         if 0 < k < n:
