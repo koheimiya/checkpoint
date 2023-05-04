@@ -32,12 +32,12 @@ def test_graph():
     6...x
     """
     Choose.clear_all()
-    ans, info = Choose(6, 3).run_with_info(rate_limits={Choose.task__queue: 2})
+    ans, info = Choose(6, 3).run_with_stats(rate_limits={Choose.queue: 2})
     assert ans == 20
     assert sum(info['stats'].values()) == 15
 
     """ 0 caches: """
-    ans, info = Choose(6, 3).run_with_info()
+    ans, info = Choose(6, 3).run_with_stats()
     assert ans == 20
     assert sum(info['stats'].values()) == 0
 
@@ -52,7 +52,7 @@ def test_graph():
     6...x
     """
     Choose(3, 3).clear()
-    ans, info = Choose(6, 3).run_with_info()
+    ans, info = Choose(6, 3).run_with_stats()
     assert ans == 20
     assert sum(info['stats'].values()) == 4
 
@@ -89,8 +89,8 @@ def test_multiple_tasks():
     TaskB.clear_all()
     TaskC.clear_all()
     assert TaskC().run() == 'hello, world'
-    assert TaskB.task__queue == 'myqueue'
-    assert TaskC.task__db.compress_level == -1
+    assert TaskB.queue == 'myqueue'
+    assert TaskC._task_info.db.compress_level == -1
 
 
 @infer_task_type
@@ -131,9 +131,9 @@ class GreetWithFile(Task):
 def test_requires_directory():
     CreateFile.clear_all()
     GreetWithFile.clear_all()
-    taskdir_world = CreateFile('Hello, world!').directory_uninit
-    taskdir_me = CreateFile('Hello, me!').directory_uninit
-    task_factory_dir = CreateFile.task__db.data_directory
+    taskdir_world = CreateFile('Hello, world!')._task_handler._directory_uninit
+    taskdir_me = CreateFile('Hello, me!')._task_handler._directory_uninit
+    task_factory_dir = CreateFile._task_info.data_directory
 
     def check_output(name: str):
         assert GreetWithFile(name).run() == f'Hello, {name}!'

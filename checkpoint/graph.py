@@ -17,13 +17,13 @@ LOGGER = logging.getLogger(__name__)
 
 
 @runtime_checkable
-class TaskProtocol(Protocol):
+class TaskHandlerProtocol(Protocol):
     @property
     def queue(self) -> str: ...
     @property
     def source_timestamp(self) -> datetime: ...
     def to_tuple(self) -> TaskKey: ...
-    def get_prerequisite_tasks(self) -> Sequence[TaskProtocol]: ...
+    def get_prerequisites(self) -> Sequence[TaskHandlerProtocol]: ...
     def peek_timestamp(self) -> datetime | None: ...
     def set_result(self) -> None: ...
 
@@ -34,7 +34,7 @@ class TaskGraph:
     detect_source_change: bool
 
     @classmethod
-    def build_from(cls, root: TaskProtocol, detect_source_change: bool) -> Self:
+    def build_from(cls, root: TaskHandlerProtocol, detect_source_change: bool) -> Self:
         G = nx.DiGraph()
         seen: set[TaskKey] = set()
         to_expand = [root]
@@ -43,7 +43,7 @@ class TaskGraph:
             x = task.to_tuple()
             if x not in seen:
                 seen.add(x)
-                prerequisite_tasks = task.get_prerequisite_tasks()
+                prerequisite_tasks = task.get_prerequisites()
                 to_expand.extend(prerequisite_tasks)
                 G.add_node(x, task=task, timestamp=task.peek_timestamp(), source_timestamp=task.source_timestamp)
                 G.add_edges_from([(p.to_tuple(), x) for p in prerequisite_tasks])
@@ -55,7 +55,7 @@ class TaskGraph:
     def size(self) -> int:
         return len(self.G)
 
-    def get_task(self, key: TaskKey) -> TaskProtocol:
+    def get_task(self, key: TaskKey) -> TaskHandlerProtocol:
         return self.G.nodes[key]['task']
 
     def trim(self) -> None:
@@ -193,6 +193,6 @@ def run_task_graph(
 
 def _run_task(queue: str, task_data: bytes) -> tuple[str, TaskKey]:  # queue, (dbname, key)
     task = cloudpickle.loads(task_data)
-    assert isinstance(task, TaskProtocol)
+    assert isinstance(task, TaskHandlerProtocol)
     task.set_result()
     return queue, task.to_tuple()

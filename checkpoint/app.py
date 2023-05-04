@@ -42,5 +42,5 @@ def main(taskfile: Path, entrypoint: str, exec_type: str, max_workers: int, cach
     assert issubclass(entrypoint_fn, Task), \
             f'Taskfile `{taskfile}` should contain a task(factory) `{entrypoint}`, but found `{entrypoint_fn}`.'
     task = entrypoint_fn()
-    task.run_with_info(rate_limits=rate_limits)
+    task.run_with_stats(rate_limits=rate_limits)
     return 0

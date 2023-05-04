@@ -34,11 +34,11 @@ class Choose(Task):
     prev2: Requires[int] = Req()
 
     def init(self, n: int, k: int):
-        # This method is optional.
         # The prerequisite tasks and the other instance attributes are prepared here.
         # It thus recursively defines all the tasks we need to compute this task,
         # i.e., the entire upstream workflow.
-        
+        # This method is optional.
+
         if 0 < k < n:
             self.prev1 = Choose(n - 1, k - 1)
             self.prev2 = Choose(n - 1, k)
@@ -50,9 +50,10 @@ class Choose(Task):
             raise ValueError(f'{(n, k)}')
 
     def main(self) -> int:
-        # This method is mandatory.
         # Here we define the main computation of the task,
         # which is delayed until it is necessary.
+        # This method is mandatory.
+
         # The return values of the prerequisite tasks are accessible via the descriptors:
         return self.prev1 + self.prev2
 
@@ -82,9 +83,9 @@ ans = Choose(6, 3).run()
 Choose.clear_all()            
 ```
 
-### Advanced IO
+### Limitations of Task I/O
 
-Tasks can be initialized with any arguments as long as it is JSON serializable:
+The arguments of the `init` method can be anything JSON serializable:
 ```python
 class T1(Task):
     def init(self, **param1):
@@ -108,7 +109,7 @@ class T3(Task):
 result = T3({'param1': { ... }, 'param2': { ... }}).run()
 ```
 
-Even more complex inputs can be passed directly as `Task`s:
+Otherwise they can be passed via `Task` and `Req`:
 ```python
 Dataset = ...  # Some complex data structure
 Model = ...    # Some complex data structure
@@ -144,7 +145,7 @@ score_task = ScoreModel(dataset, model)
 print(score_task.run())
 ```
 
-Task dependencies can be specified with lists and dicts:
+`Req` accepts a list/dict of tasks and automatically unfolds it.
 ```python
 from checkpoint import RequiresDict
 
@@ -159,6 +160,7 @@ class SummarizeScores(Task):
         return sum(self.scores.values()) / len(self.scores)  # We have access to the dict of the results.
 ```
 
+The output of the `main` method should be serializable with `cloudpickle`.
 Large outputs can be stored with compression via `zlib`:
 ```python
 class large_output_task(Task, compress_level=-1):
@@ -210,7 +212,7 @@ class AnotherTaskUsingGPU(Task, queue='gpu'):
     ...
 
 SomeDownstreamTask.run(rate_limits={'gpu': 1})  # Queue-level concurrency control
-SomeDownstreamTask.run(rate_limits={MemoryIntensiveTask.task__queue: 1})  # Task-level concurrency control
+SomeDownstreamTask.run(rate_limits={MemoryIntensiveTask.queue: 1})  # Task-level concurrency control
 
 ```
 
