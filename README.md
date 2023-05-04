@@ -167,15 +167,11 @@ class LargeOutputTask(Task, compress_level=-1):
 
 ### Data directories
 
-Use `task.directory` as a fresh directory dedicated to each task.
+Use `task.directory: pathlib.Path` as a fresh directory dedicated to each task.
 A directory is automatically created at
 `{$CP_CACHE_DIR:-./.cache}/checkpoint/{module_name}.{task_name}/data/{cryptic_task_id}`
 and the contents of the directory are cleared at each task call and persist until the task is `clear`ed.
 ```python
-from pathlib import Path
-from checkpoint import TaskDirectory
-
-
 class TrainModel(Task):
 
     def main(self) -> str:
