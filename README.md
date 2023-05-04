@@ -26,18 +26,19 @@ from checkpoint import Task, Req, Requires, Const
 @infer_task_type
 class Choose(Task):
     """ Compute the binomial coefficient. """
-    # Inside a task, we first declare the prerequisite tasks with the descriptor `Req`.
+    # Inside a task, we first declare the values that must be computed upstream with the descriptor `Req`.
     # In this example, `Choose(n, k)` depends on `Choose(n - 1, k - 1)` and `Choose(n - 1, k)`,
-    # so we have two prerequisite tasks computing `int` values.
-    # Through these requirements, we recursively defines all the tasks we need to compute this task,
-    # i.e., the entire upstream workflow.
-    # The type hint with `Requires` is optional.
+    # so it requires two `int` values.
+    # The type annotation with `Requires` is optional.
     prev1: Requires[int] = Req()
     prev2: Requires[int] = Req()
 
     def init(self, n: int, k: int):
-        # The prerequisite tasks and other instance attributes are prepared here.
-        # This method is optional if we do not have prerequisite tasks.
+        # This method is optional.
+        # The prerequisite tasks and the other instance attributes are prepared here.
+        # It thus recursively defines all the tasks we need to compute this task,
+        # i.e., the entire upstream workflow.
+        
         if 0 < k < n:
             self.prev1 = Choose(n - 1, k - 1)
             self.prev2 = Choose(n - 1, k)
@@ -49,7 +50,7 @@ class Choose(Task):
             raise ValueError(f'{(n, k)}')
 
     def main(self) -> int:
-        # It is mandatory to implement this method.
+        # This method is mandatory.
         # Here we define the main computation of the task,
         # which is delayed until it is necessary.
         # The return values of the preerquisite tasks are accessible via the descriptors:
@@ -61,7 +62,7 @@ ans = Choose(6, 3).run()  # `ans` should be 6 Choose 3, which is 20.
 # It greedily executes all the necessary tasks as parallel as possible
 # and then spits out the return value of the task on which we call `run()`.
 # The return values of the intermediate tasks are cached at
-# `{$CP_CACHE_DIR:-./.cache}/checkpoint/{module_name}.{function_name}/...`
+# `{$CP_CACHE_DIR:-./.cache}/checkpoint/{module_name}.{task_name}/...`
 # and reused on the fly whenever possible.
 ```
 
