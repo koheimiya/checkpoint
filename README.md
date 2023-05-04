@@ -161,7 +161,7 @@ class SummarizeScores(Task):
 
 Large outputs can be stored with compression via `zlib`:
 ```python
-class large_output_task(Task, compress_level=-1):
+class LargeOutputTask(Task, compress_level=-1):
     ...
 ```
 
