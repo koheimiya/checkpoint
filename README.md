@@ -226,7 +226,8 @@ Please refer to `python -m checkpoint --help` for more info.
 
 
 ## TODO
- - [ ] Taskfile examples for class-decorator based implementation
- - [ ] Simple visualizers
+- [ ] Use inner class or naming convention to namespace dependencies and attributes
+- [ ] Taskfile examples for class-decorator based implementation
+- [ ] Simple visualizers
     - [ ] Task-wise progressbar
     - [ ] Graph visualizer
