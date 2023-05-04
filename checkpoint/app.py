@@ -7,7 +7,7 @@ import json
 
 import click
 
-from .task import BaseTask
+from .task import Task
 
 
 @click.command
@@ -39,7 +39,7 @@ def main(taskfile: Path, entrypoint: str, exec_type: str, max_workers: int, cach
 
     # Run the main task
     entrypoint_fn = getattr(module, entrypoint)
-    assert issubclass(entrypoint_fn, BaseTask), \
+    assert issubclass(entrypoint_fn, Task), \
             f'Taskfile `{taskfile}` should contain a task(factory) `{entrypoint}`, but found `{entrypoint_fn}`.'
     task = entrypoint_fn()
     task.run_with_info(rate_limits=rate_limits)

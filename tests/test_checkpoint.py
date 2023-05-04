@@ -1,9 +1,11 @@
-from checkpoint import BaseTask, Requires, Const
+from checkpoint import Task
+from checkpoint.task import infer_task_type, Req, Requires, Const
 
 
-class Choose(BaseTask[[int, int], int]):
-    prev1: Requires[int] = Requires()
-    prev2: Requires[int] = Requires()
+@infer_task_type
+class Choose(Task):
+    prev1: Requires[int] = Req()
+    prev2: Requires[int] = Req()
 
     def init(self, n: int, k: int):
         if 0 < k < n:

@@ -12,10 +12,13 @@ import sys
 
 from .app import main
 from .types import Context
-from .task import BaseTask, Req, Requires, RequiresDirectory, RequiresDict, RequiresList, Const
+from .task import Task
 
 
-__EXPORT__ = [BaseTask, Const, Req, Requires, RequiresList, RequiresDict, RequiresDirectory, Context]
+__EXPORT__ = [
+        Task,
+        Context
+        ]
 
 
 if __name__ == '__main__':

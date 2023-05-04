@@ -1,6 +1,6 @@
 from __future__ import annotations
 from abc import ABC, abstractmethod
-from typing import Callable, Generic, NewType, Protocol, Self, Sequence, Type, TypeVar, Any, cast
+from typing import Callable, Generic, Protocol, Self, Sequence, Type, TypeVar, Any, cast, overload
 from typing_extensions import ParamSpec
 from dataclasses import dataclass
 from datetime import datetime
@@ -26,12 +26,12 @@ LOGGER = logging.getLogger(__name__)
 
 K = TypeVar('K')
 T = TypeVar('T')
+U = TypeVar('U')
 P = ParamSpec('P')
 R = TypeVar('R', covariant=True)
-TaskReady = NewType('TaskReady', 'BaseTask')
 
 
-class BaseTask(Generic[P, R], ABC):
+class Task(Generic[P, R], ABC):
     task__subclass: Type[Self]
     task__name: str
     task__db: Database[R]
@@ -99,18 +99,14 @@ class BaseTask(Generic[P, R], ABC):
     def source_timestamp(self) -> datetime:
         return self.task__source_timestamp
 
-    def get_prerequisite_tasks(self) -> Sequence[BaseTask[..., Any]]:
+    def get_prerequisite_tasks(self) -> Sequence[Task[..., Any]]:
         cls = self.task__subclass
         inst = self.real_instance
-        prerequisites: list[BaseTask[..., Any]] = []
+        prerequisites: list[Task[..., Any]] = []
         for _, v in inspect.getmembers(cls):
-            if isinstance(v, Requires):
-                prerequisites.append(getattr(inst, v.private_name))
-            elif isinstance(v, RequiresList):
-                prerequisites.extend(getattr(inst, v.private_name))
-            elif isinstance(v, RequiresDict):
-                prerequisites.extend(getattr(inst, v.private_name).values())
-        assert all(isinstance(p, BaseTask) for p in prerequisites)
+            if isinstance(v, Req):
+                prerequisites.extend(v.get_task_list(inst))
+        assert all(isinstance(p, Task) for p in prerequisites)
         return prerequisites
 
     def peek_timestamp(self) -> datetime | None:
@@ -126,12 +122,13 @@ class BaseTask(Generic[P, R], ABC):
         db.save(self.arg_key, out)
 
     def _get_directory_prepared_if_necessary(self) -> None:
-        if not any(isinstance(v, RequiresDirectory) for _, v in inspect.getmembers(self.task__subclass)):
-            return
+        for _, v in inspect.getmembers(self.task__subclass):
+            if isinstance(v, Directory):
+                v.path = self.directory
+
         if self.directory.exists():
             shutil.rmtree(self.directory)
         self.directory.mkdir()
-        setattr(self.real_instance, RequiresDirectory.private_name, self.directory)
 
     def get_result(self) -> R:
         return self.task__db.load(self.arg_key)
@@ -170,33 +167,14 @@ class BaseTask(Generic[P, R], ABC):
         return self.get_result(), info
 
 
-# class TaskDefinitionProtocol(Protocol[P, R]):
-#     def __init__(self, *args: P.args, **kwargs: P.kwargs) -> None: ...
-#     def run(self) -> R: ...
-# 
-# 
-# class TaskFactory(Generic[P, R]):
-# 
-#     def __init__(self, task_class: Type[TaskDefinitionProtocol[P, R]], compress_level: int, queue: str | None) -> None:
-#         self.task_class = task_class
-# 
-#         self.name = _serialize_function(self.task_class)
-#         self.db: Database[R] = Database.make(name=self.name, compress_level=compress_level)
-#         self.queue = f'<{self.name}>' if queue is None else queue
-# 
-#         source = inspect.getsource(self.task_class)
-#         formatted_source = ast.unparse(ast.parse(source))
-#         self.source_timestamp = self.db.update_source_if_necessary(formatted_source)
-# 
-#         self.instance_registry: dict[Json, TaskDefinitionProtocol[P, R]] = {}
-# 
-#     def __call__(self, *args: P.args, **kwargs: P.kwargs) -> Task[R]:
-#         arg_key = _serialize_arguments(self.task_class, *args, **kwargs)
-#         task_instance = self.instance_registry.get(arg_key, None)
-#         if task_instance is None:
-#             task_instance = self.task_class(*args, **kwargs)
-#             self.instance_registry[arg_key] = task_instance
-#         return Task(task_factory=self, arg_key=arg_key, task_instance=task_instance)
+class TaskTypeProtocol(Protocol[P, R]):
+    def init(self, *args: P.args, **kwargs: P.kwargs) -> None: ...
+    def main(self) -> R: ...
+
+
+def infer_task_type(cls: Type[TaskTypeProtocol[P, R]]) -> Callable[P, Task[P, R]]:
+    assert issubclass(cls, Task), f'{cls} must inherit from {Task} to infer task type.'
+    return cast(Callable[P, Task[P, R]], cls)
 
 
 def _serialize_function(fn: Callable[..., Any]) -> str:
@@ -216,159 +194,84 @@ def _serialize_arguments(fn: Callable[P, Any], *args: P.args, **kwargs: P.kwargs
 
 class CustomJSONEncoder(json.JSONEncoder):
     def default(self, o):
-        if isinstance(o, BaseTask):
+        if isinstance(o, Task):
             return {'__task__': o.to_tuple()}
         else:
             # Let the base class default method raise the TypeError
             return super().default(o)
 
 
-# def task(compress_level: int = 0, queue: str | None = None) -> Callable[[Type[TaskDefinitionProtocol[P, R]]], TaskFactory[P, R]]:
-#     def decorator(cls: Type[TaskDefinitionProtocol[P, R]]) -> TaskFactory[P, R]:
-#         return TaskFactory(cls, compress_level=compress_level, queue=queue)
-#     return decorator
-
-
-# @dataclass
-# class Task(Generic[R]):
-#     task_factory: TaskFactory[..., R]
-#     arg_key: Json
-#     task_instance: TaskDefinitionProtocol[..., R]
-# 
-#     @property
-#     def _relative_path(self) -> str:
-#         _, arg_str = self.to_tuple()
-#         id_ = base64.urlsafe_b64encode(zlib.compress(arg_str.encode(), level=9)).decode().replace('=', '')
-#         return os.path.join(*[id_[i:i+255] for i in range(0, len(id_), 255)])
-# 
-#     @property
-#     def directory(self) -> Path:
-#         return Path(self.task_factory.db.data_directory) / self._relative_path
-# 
-#     def clear(self) -> None:
-#         db = self.task_factory.db
-#         db.delete(self.arg_key)
-#         if self.directory.exists():
-#             shutil.rmtree(self.directory)
-# 
-#     @property
-#     def queue(self) -> str:
-#         return self.task_factory.queue
-# 
-#     @property
-#     def source_timestamp(self) -> datetime:
-#         return self.task_factory.source_timestamp
-# 
-#     def to_tuple(self) -> TaskKey:
-#         return (self.task_factory.name, self.arg_key)
-# 
-#     def get_prerequisite_tasks(self) -> list[Self]:
-#         cls = self.task_factory.task_class
-#         inst = self.task_instance
-#         requirement_names = [v.private_name for _, v in inspect.getmembers(cls) if isinstance(v, Requires)]
-#         return [getattr(inst, k) for k in requirement_names]
-# 
-#     def peek_timestamp(self) -> datetime | None:
-#         try:
-#             return self.task_factory.db.load_timestamp(self.arg_key)
-#         except KeyError:
-#             return None
-# 
-#     def set_result(self) -> None:
-#         db = self.task_factory.db
-#         self._get_directory_prepared_if_necessary()
-#         out = self.task_instance.run()
-#         db.save(self.arg_key, out)
-# 
-#     def _get_directory_prepared_if_necessary(self) -> None:
-#         if not any(isinstance(v, RequiresDirectory) for _, v in inspect.getmembers(self.task_factory.task_class)):
-#             return
-#         if self.directory.exists():
-#             shutil.rmtree(self.directory)
-#         self.directory.mkdir()
-#         setattr(self.task_instance, RequiresDirectory.private_name, self.directory)
-# 
-#     def get_result(self) -> R:
-#         return self.task_factory.db.load(self.arg_key)
-# 
-#     def run(
-#             self, *,
-#             executor: Executor | None = None,
-#             max_workers: int | None = None,
-#             rate_limits: dict[str, int] | None = None,
-#             detect_source_change: bool | None = None,
-#             ) -> R:
-#         return self.run_with_info(
-#                 executor=executor,
-#                 max_workers=max_workers,
-#                 rate_limits=rate_limits,
-#                 detect_source_change=detect_source_change
-#                 )[0]
-# 
-#     def run_with_info(
-#             self, *,
-#             executor: Executor | None = None,
-#             max_workers: int | None = None,
-#             rate_limits: dict[str, int] | None = None,
-#             detect_source_change: bool | None = None,
-#             dump_generations: bool = False
-#             ) -> tuple[R, dict[str, Any]]:
-#         if detect_source_change is None:
-#             detect_source_change = Context.detect_source_change
-#         graph = TaskGraph.build_from(self, detect_source_change=detect_source_change)
-# 
-#         if executor is None:
-#             executor = Context.get_executor(max_workers=max_workers)
-#         else:
-#             assert max_workers is None
-#         info = run_task_graph(graph=graph, executor=executor, rate_limits=rate_limits, dump_graphs=dump_generations)
-#         return task.get_result(), info
-
-
-class Req:
-    def __set_name__(self, owner: BaseTask[..., Any], name: str) -> None:
+class Req(Generic[T, R]):
+    def __set_name__(self, _: Task[..., Any], name: str) -> None:
         self.public_name = name
-        self.private_name = '_' + name
+        self.private_name = '_requires__' + name
 
-
-class Requires(Req, Generic[T]):
-    def __set__(self, obj: BaseTask[..., Any], value: BaseTask[..., T]) -> None:
+    def __set__(self, obj: Task[..., Any], value: T) -> None:
         setattr(obj, self.private_name, value)
 
-    def __get__(self, obj: BaseTask[..., Any], objtype=None) -> T:
+    @overload
+    def __get__(self: Req[TaskLike[U], U], obj: Task[..., Any], _=None) -> U: ...
+    @overload
+    def __get__(self: Req[list[TaskLike[U]], list[U]], obj: Task[..., Any], _=None) -> list[U]: ...
+    @overload
+    def __get__(self: Req[dict[K, TaskLike[U]], dict[K, U]], obj: Task[..., Any], _=None) -> dict[K, U]: ...
+    @overload
+    def __get__(self: Req[Directory, Path], obj: Task[..., Any], _=None) -> Path: ...
+    def __get__(self, obj: Task[..., Any], _=None) -> Any:
         task = getattr(obj, self.private_name)
-        return task.get_result()
+        if isinstance(task, Task):
+            return task.get_result()
+        elif isinstance(task, list):
+            return [t.get_result() for t in task]
+        elif isinstance(task, dict):
+            return {k: v.get_result() for k, v in task.items()}
+        elif isinstance(task, Directory):
+            return task.get_path_prepared()
+        elif isinstance(task, Const):
+            return task.value
+        else:
+            raise TypeError(f'Unsupported requirement type: {type(task)}')
+
+    def get_task_list(self, obj: Task[..., Any]) -> list[Task[..., Any]]:
+        task = getattr(obj, self.private_name)
+        if isinstance(task, Task):
+            return [task]
+        elif isinstance(task, list):
+            return task
+        elif isinstance(task, dict):
+            return [v.get_result() for _, v in task.items()]
+        elif isinstance(task, Directory):
+            return []
+        elif isinstance(task, Const):
+            return []
+        else:
+            raise TypeError(f'Unsupported requirement type: {type(task)}')
 
 
-class RequiresList(Req, Generic[T]):
-    def __set__(self, obj: BaseTask[..., Any], value: list[BaseTask[..., T]]) -> None:
-        setattr(obj, self.private_name, value)
+@dataclass
+class Directory:
+    path: Path | None = None
 
-    def __get__(self, obj: BaseTask[..., Any], objtype=None) -> list[T]:
-        task_list = getattr(obj, self.private_name)
-        return [task.get_result() for task in task_list]
-
-
-class RequiresDict(Req, Generic[K, T]):
-    def __set__(self, obj: BaseTask[..., Any], value: dict[K, BaseTask[..., T]]) -> None:
-        setattr(obj, self.private_name, value)
-
-    def __get__(self, obj: BaseTask[..., Any], objtype=None) -> dict[K, T]:
-        task_dict = getattr(obj, self.private_name)
-        return {k: task.get_result() for k, task in task_dict.items()}
+    def get_path_prepared(self) -> Path:
+        assert self.path is not None, 'Should never happen.'
+        if self.path.exists():
+            shutil.rmtree(self.path)
+        self.path.mkdir()
+        return self.path
 
 
-class RequiresDirectory:
-    private_name = '_task_directory'
-    def __get__(self, obj: BaseTask[..., Any], objtype=None) -> Path:
-        path = getattr(obj, self.private_name)
-        assert isinstance(path, Path)
-        return path
+@dataclass
+class Const(Generic[T]):
+    value: T
+
+    def get_result(self) -> T:
+        return self.value
 
 
-class Const(BaseTask[[T], T]):
-    def init(self, x: T) -> None:
-        self.x = x
+TaskLike = Task[..., U] | Const[U]
 
-    def main(self) -> T:
-        return self.x
+
+Requires = Req[TaskLike[U], U]
+RequiresList = Req[list[TaskLike[U]], list[U]]
+RequiresDict = Req[dict[K, TaskLike[U]], dict[K, U]]
+RequiresDirectory = Req[Directory, Path]
