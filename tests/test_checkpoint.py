@@ -115,6 +115,7 @@ class CreateFile(Task):
             f.write(self.content)
         return str(outpath)
 
+
 @infer_task_type
 class GreetWithFile(Task):
     filepath: Requires[str] = Req()
