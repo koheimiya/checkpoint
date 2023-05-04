@@ -35,7 +35,7 @@ class Choose(Task):
 
     def init(self, n: int, k: int):
         # The prerequisite tasks and the other instance attributes are prepared here.
-        # It thus recursively defines all the tasks we need to compute this task,
+        # It thus recursively defines all the tasks we need to run this task,
         # i.e., the entire upstream workflow.
         # This method is optional.
 
@@ -163,21 +163,17 @@ class SummarizeScores(Task):
 The output of the `main` method should be serializable with `cloudpickle`.
 Large outputs can be stored with compression via `zlib`:
 ```python
-class large_output_task(Task, compress_level=-1):
+class LargeOutputTask(Task, compress_level=-1):
     ...
 ```
 
 ### Data directories
 
-Use `task.directory` as a fresh directory dedicated to each task.
+Use `task.directory: pathlib.Path` as a fresh directory dedicated to each task.
 A directory is automatically created at
 `{$CP_CACHE_DIR:-./.cache}/checkpoint/{module_name}.{task_name}/data/{cryptic_task_id}`
 and the contents of the directory are cleared at each task call and persist until the task is `clear`ed.
 ```python
-from pathlib import Path
-from checkpoint import TaskDirectory
-
-
 class TrainModel(Task):
 
     def main(self) -> str:
@@ -211,8 +207,8 @@ class TaskUsingGPU(Task, queue='gpu'):
 class AnotherTaskUsingGPU(Task, queue='gpu'):
     ...
 
-SomeDownstreamTask.run(rate_limits={'gpu': 1})  # Queue-level concurrency control
-SomeDownstreamTask.run(rate_limits={MemoryIntensiveTask.queue: 1})  # Task-level concurrency control
+SomeDownstreamTask().run(rate_limits={'gpu': 1})  # Queue-level concurrency control
+SomeDownstreamTask().run(rate_limits={MemoryIntensiveTask.queue: 1})  # Task-level concurrency control
 
 ```
 
