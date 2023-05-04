@@ -52,7 +52,7 @@ class Choose(Task):
         # It is mandatory to implement this method.
         # Here we define the main computation of the task,
         # which is delayed until it is necessary.
-        # The return values of the preerquisite tasks are accessible via the descriptors:
+        # The return values of the prerequisite tasks are accessible via the descriptors:
         return self.prev1 + self.prev2
 
 # To run tasks, use the `run()` method.
@@ -85,26 +85,26 @@ Choose.clear_all()
 
 Tasks can be initialized with any arguments as long as it is JSON serializable:
 ```python
-class t1(Task):
+class T1(Task):
     def init(self, **param1):
         ...
 
-class t2(Task):
+class T2(Task):
     def init(self, **param2):
         ...
 
-class t3(Task):
+class T3(Task):
     x1 = Req()
     x2 = Req()
 
     def init(self, json_params):
-        self.x1 = t1(**json_params['param1'])
-        self.x2 = t2(**json_params['param2'])
+        self.x1 = T1(**json_params['param1'])
+        self.x2 = T2(**json_params['param2'])
 
     def main(self):
         ...
 
-result = t3({'param1': { ... }, 'param2': { ... }}).run()
+result = T3({'param1': { ... }, 'param2': { ... }}).run()
 ```
 
 Even more complex inputs can be passed directly as `Task`s:
@@ -112,11 +112,11 @@ Even more complex inputs can be passed directly as `Task`s:
 Dataset = ...  # Some complex data structure
 Model = ...    # Some complex data structure
 
-class load_dataset(Task):
+class LoadDataset(Task):
     def main(self) -> Dataset:
         ...
 
-class train_model(Task):
+class TrainModel(Task):
     dataset = Req()
 
     def init(self, dataset_task: Task[Dataset]):
@@ -125,7 +125,7 @@ class train_model(Task):
     def main(self) -> Model:
         ...
     
-class score_model(Task):
+class ScoreModel(Task):
     dataset = Req()
     model = Req()
 
@@ -137,9 +137,9 @@ class score_model(Task):
         ...
 
 
-dataset_task = load_dataset()
-model_task = train_model(dataset)
-score_task = score_model(dataset, model)
+dataset_task = LoadDataset()
+model_task = TrainModel(dataset)
+score_task = ScoreModel(dataset, model)
 print(score_task.run())
 ```
 
@@ -148,13 +148,13 @@ Task dependencies can be specified with lists and dicts:
 from checkpoint import RequiresDict
 
 
-class summarize_scores(Task):
+class SummarizeScores(Task):
     scores: RequiresDict[str, float] = Req()  # Again, type annotation is optional.
 
-    def init(self, scores_tasks: dict[str, Task[float]]):
-        self.scores = scores_tasks
+    def init(self, task_dict: dict[str, Task[float]]):
+        self.scores = task_dict
 
-    def main(self):
+    def main(self) -> float:
         return sum(self.scores.values()) / len(self.scores)  # We have access to the dict of the results.
 ```
 
@@ -166,7 +166,7 @@ class large_output_task(Task, compress_level=-1):
 
 ### Data directories
 
-Use `Task.directory` as a fresh directory dedicated to each task.
+Use `task.directory` as a fresh directory dedicated to each task.
 A directory is automatically created at
 `{$CP_CACHE_DIR:-./.cache}/checkpoint/{module_name}.{task_name}/data/{cryptic_task_id}`
 and the contents of the directory are cleared at each task call and persist until the task is `clear`ed.
@@ -175,7 +175,7 @@ from pathlib import Path
 from checkpoint import TaskDirectory
 
 
-class train_model(Task):
+class TrainModel(Task):
 
     def main(self) -> str:
         ...
@@ -190,26 +190,26 @@ One can control the task execution with `concurrent.futures.Executor` class:
 ```python
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 
-class my_task(Task):
+class MyTask(Task):
     ...
 
 # Limit the number of parallel workers
-my_task().run(executor=ProcessPoolExecutor(max_workers=2))
+MyTask().run(executor=ProcessPoolExecutor(max_workers=2))
 
 # Thread-based parallelism
-my_task().run(executor=ThreadPoolExecutor())
+MyTask().run(executor=ThreadPoolExecutor())
 ```
 
 One can also control the concurrency at a task/queue level:
 ```python
-class task_using_gpu(Task, queue='gpu'):
+class TaskUsingGPU(Task, queue='gpu'):
     ...
 
-class another_task_using_gpu(Task, queue='gpu'):
+class AnotherTaskUsingGPU(Task, queue='gpu'):
     ...
 
-some_downstream_task.run(rate_limits={'gpu': 1})  # Queue-level concurrency control
-some_downstream_task.run(rate_limits={yet_another_task.queue: 1})  # Task-level concurrency control
+SomeDownstreamTask.run(rate_limits={'gpu': 1})  # Queue-level concurrency control
+SomeDownstreamTask.run(rate_limits={MemoryIntensiveTask.task__queue: 1})  # Task-level concurrency control
 
 ```
 
