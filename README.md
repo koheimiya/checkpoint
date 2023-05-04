@@ -15,7 +15,7 @@ pip install checkpoint-tool
 
 ### Basic usage
 
-Workflow is a directed acyclic graph (DAG) of tasks, and task is a unit of work represented with a nested function.
+Workflow is a directed acyclic graph (DAG) of tasks, and task is a unit of work represented with a class.
 Here is an example.
 ```python
 from checkpoint import Task, Req, Requires, Const
