@@ -1,14 +1,16 @@
-from pathlib import Path
-from checkpoint import requires, TaskDirectory, task
+from checkpoint import infer_task_type, Task, DataPath
 
 
-@task
-def main():
+@infer_task_type
+class Main(Task):
     """ Example task """
-    @requires(TaskDirectory())
-    def __(path: Path) -> None:
+    file = DataPath('text.txt')
+
+    def init(self):
+        pass
+
+    def main(self) -> None:
         print('running')
-        with open(path / 'test.txt', 'w') as f:
+        with open(self.file, 'w') as f:
             f.write('hello\n')
         return
-    return __

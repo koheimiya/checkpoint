@@ -29,7 +29,7 @@ class Choose(Task):
     # Inside a task, we first declare the values that must be computed upstream with the descriptor `Req`.
     # In this example, `Choose(n, k)` depends on `Choose(n - 1, k - 1)` and `Choose(n - 1, k)`,
     # so it requires two `int` values.
-    # The type annotation with `Requires` is optional.
+    # Either the type annotation `Requires[...]` or the assignment `= Req()` may be omitted.
     prev1: Requires[int] = Req()
     prev2: Requires[int] = Req()
 
@@ -37,7 +37,6 @@ class Choose(Task):
         # The prerequisite tasks and the other instance attributes are prepared here.
         # It thus recursively defines all the tasks we need to run this task,
         # i.e., the entire upstream workflow.
-        # This method is optional.
 
         if 0 < k < n:
             self.prev1 = Choose(n - 1, k - 1)
@@ -52,16 +51,15 @@ class Choose(Task):
     def main(self) -> int:
         # Here we define the main computation of the task,
         # which is delayed until it is necessary.
-        # This method is mandatory.
 
         # The return values of the prerequisite tasks are accessible via the descriptors:
         return self.prev1 + self.prev2
 
-# To run tasks, use the `run()` method.
-ans = Choose(6, 3).run()  # `ans` should be 6 Choose 3, which is 20.
+# To run tasks, use the `run_task()` method.
+ans = Choose(6, 3).worker.run_task()  # `ans` should be 6 Choose 3, which is 20.
 
 # It greedily executes all the necessary tasks as parallel as possible
-# and then spits out the return value of the task on which we call `run()`.
+# and then spits out the return value of the task on which we call `run_task()`.
 # The return values of the intermediate tasks are cached at
 # `{$CP_CACHE_DIR:-./.cache}/checkpoint/{module_name}.{task_name}/...`
 # and reused on the fly whenever possible.
@@ -73,14 +71,14 @@ It is possible to selectively discard cache:
 ```python
 # After some modificaiton of `Choose(3, 3)`,
 # selectively discard the cache corresponding to the modification.
-Choose(3, 3).clear()
+Choose(3, 3).clear_task()
 
 # `ans` is recomputed tracing back to the computation of `Choose(3, 3)`.
-ans = Choose(6, 3).run()
+ans = Choose(6, 3).run_task()
 
 # Delete all the cache associated with `Choose`,
 # equivalent to `rm -r {$CP_CACHE_DIR:-./.cache}/checkpoint/{module_name}.Choose`.
-Choose.clear_all()            
+Choose.clear_all_tasks()            
 ```
 
 ### Limitations of Task I/O
@@ -90,10 +88,12 @@ The arguments of the `init` method can be anything JSON serializable:
 class T1(Task):
     def init(self, **param1):
         ...
+    ...
 
 class T2(Task):
     def init(self, **param2):
         ...
+    ...
 
 class T3(Task):
     x1 = Req()
@@ -106,7 +106,7 @@ class T3(Task):
     def main(self):
         ...
 
-result = T3({'param1': { ... }, 'param2': { ... }}).run()
+result = T3({'param1': { ... }, 'param2': { ... }}).run_task()
 ```
 
 Otherwise they can be passed via `Task` and `Req`:
@@ -115,11 +115,14 @@ Dataset = ...  # Some complex data structure
 Model = ...    # Some complex data structure
 
 class LoadDataset(Task):
+    def init(self):
+        pass
+
     def main(self) -> Dataset:
         ...
 
 class TrainModel(Task):
-    dataset = Req()
+    dataset: Requires[Datset]
 
     def init(self, dataset_task: Task[Dataset]):
         self.dataset = dataset_task
@@ -128,8 +131,8 @@ class TrainModel(Task):
         ...
     
 class ScoreModel(Task):
-    dataset = Req()
-    model = Req()
+    dataset: Requires[Datset]
+    model: Requires[Model]
 
     def init(self, dataset_task: Task[Dataset], model_task: Task[Model]):
         self.dataset = dataset_task
@@ -142,7 +145,7 @@ class ScoreModel(Task):
 dataset_task = LoadDataset()
 model_task = TrainModel(dataset)
 score_task = ScoreModel(dataset, model)
-print(score_task.run())
+print(score_task.run_task()
 ```
 
 `Req` accepts a list/dict of tasks and automatically unfolds it.
@@ -151,7 +154,7 @@ from checkpoint import RequiresDict
 
 
 class SummarizeScores(Task):
-    scores: RequiresDict[str, float] = Req()  # Again, type annotation is optional.
+    scores: RequiresDict[str, float] = Req()  # Again, type annotation or assignment may be omitted.
 
     def init(self, task_dict: dict[str, Task[float]]):
         self.scores = task_dict
@@ -169,18 +172,21 @@ class LargeOutputTask(Task, compress_level=-1):
 
 ### Data directories
 
-Use `task.directory: pathlib.Path` as a fresh directory dedicated to each task.
-A directory is automatically created at
+Use `DataPath(name)` to get a fresh path dedicated to each task.
+The parent directory is automatically created at
 `{$CP_CACHE_DIR:-./.cache}/checkpoint/{module_name}.{task_name}/data/{cryptic_task_id}`
-and the contents of the directory are cleared at each task call and persist until the task is `clear`ed.
+and the contents of the directory are cleared at each task call and persist until the task is cleared.
 ```python
+from checkpoint import DataPath
+
 class TrainModel(Task):
+    model_path = DataPath('model.bin')
+    ...
 
     def main(self) -> str:
         ...
-        model_path = str(self.directory / 'model.bin')
-        model.save(model_path)
-        return model_path
+        model.save(self.model_path)  # Gives `Path('.../model.bin')`
+        return self.model_path
 ```
 
 ### Execution policy configuration
@@ -221,12 +227,12 @@ class Main(Task):
     ...
 ```
 The command runs the `Main()` task and stores the cache right next to `taskfile.py` as `.cache/checkpoint/...`.
-Please refer to `python -m checkpoint --help` for more info.
+Please refer to `python -m checkpoint.app --help` for more info.
 
 
 
 ## TODO
- - [ ] Taskfile examples for class-decorator based implementation
+ - [ ] Loader-based serialization
  - [ ] Simple visualizers
     - [ ] Task-wise progressbar
     - [ ] Graph visualizer

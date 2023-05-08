@@ -1,6 +1,6 @@
 from typing import Any
 import pytest
-from checkpoint import infer_task_type, Task, Req, Requires, Const, RequiresDict
+from checkpoint import infer_task_type, Task, Req, Requires, Const, RequiresDict, DataPath
 
 
 @infer_task_type
@@ -31,15 +31,15 @@ def test_graph():
     5..xx
     6...x
     """
-    Choose.clear_all()
-    ans, info = Choose(6, 3).run_with_stats(rate_limits={Choose.queue: 2})
+    Choose.clear_all_tasks()
+    ans, stats = Choose(6, 3).run_task_with_stats(rate_limits={Choose.task_config.queue: 2})
     assert ans == 20
-    assert sum(info['stats'].values()) == 15
+    assert sum(stats['stats'].values()) == 15
 
     """ 0 caches: """
-    ans, info = Choose(6, 3).run_with_stats()
+    ans, stats = Choose(6, 3).run_task_with_stats()
     assert ans == 20
-    assert sum(info['stats'].values()) == 0
+    assert sum(stats['stats'].values()) == 0
 
     """ 4 caches:
      0123
@@ -51,14 +51,15 @@ def test_graph():
     5...x
     6...x
     """
-    Choose(3, 3).clear()
-    ans, info = Choose(6, 3).run_with_stats()
+    Choose(3, 3).clear_task()
+    ans, stats = Choose(6, 3).run_task_with_stats()
     assert ans == 20
-    assert sum(info['stats'].values()) == 4
+    assert sum(stats['stats'].values()) == 4
 
 
 @infer_task_type
 class TaskA(Task):
+    def init(self): ...
 
     def main(self) -> str:
         return 'hello'
@@ -66,6 +67,7 @@ class TaskA(Task):
 
 @infer_task_type
 class TaskB(Task, queue='myqueue'):
+    def init(self): ...
     
     def main(self) -> str:
         return 'world'
@@ -85,35 +87,37 @@ class TaskC(Task, compress_level=-1):
 
 
 def test_multiple_tasks():
-    TaskA.clear_all()
-    TaskB.clear_all()
-    TaskC.clear_all()
-    assert TaskC().run() == 'hello, world'
-    assert TaskB.queue == 'myqueue'
-    assert TaskC._task_info.db.compress_level == -1
+    TaskA.clear_all_tasks()
+    TaskB.clear_all_tasks()
+    TaskC.clear_all_tasks()
+    assert TaskC().run_task() == 'hello, world'
+    assert TaskB.task_config.queue == 'myqueue'
+    assert TaskC.task_config.db.compress_level == -1
 
 
 @infer_task_type
 class TaskRaise(Task):
+    def init(self): ...
     def main(self):
         raise ValueError(42)
 
 
 def test_raise():
     with pytest.raises(ValueError):
-        TaskRaise().run()
+        TaskRaise().run_task()
 
 
 @infer_task_type
 class CreateFile(Task):
+    outpath = DataPath('test.txt')
+
     def init(self, content: str):
         self.content = content
 
     def main(self) -> str:
-        outpath = self.directory / 'test.txt'
-        with open(outpath, 'w') as f:
+        with open(self.outpath, 'w') as f:
             f.write(self.content)
-        return str(outpath)
+        return str(self.outpath)
 
 
 @infer_task_type
@@ -129,14 +133,14 @@ class GreetWithFile(Task):
 
 
 def test_requires_directory():
-    CreateFile.clear_all()
-    GreetWithFile.clear_all()
-    taskdir_world = CreateFile('Hello, world!')._task_handler._directory_uninit
-    taskdir_me = CreateFile('Hello, me!')._task_handler._directory_uninit
-    task_factory_dir = CreateFile._task_info.data_directory
+    CreateFile.clear_all_tasks()
+    GreetWithFile.clear_all_tasks()
+    taskdir_world = CreateFile('Hello, world!').task_worker._directory_uninit
+    taskdir_me = CreateFile('Hello, me!').task_worker._directory_uninit
+    task_factory_dir = CreateFile.task_config.data_directory
 
     def check_output(name: str):
-        assert GreetWithFile(name).run() == f'Hello, {name}!'
+        assert GreetWithFile(name).run_task() == f'Hello, {name}!'
 
     assert not taskdir_world.exists()
     assert not taskdir_me.exists()
@@ -148,18 +152,18 @@ def test_requires_directory():
     assert any(task_factory_dir.iterdir())
 
     # Directories persist
-    GreetWithFile.clear_all()
+    GreetWithFile.clear_all_tasks()
     check_output('world')
 
     # Specific task directory can be deleted
-    CreateFile('Hello, world!').clear()
+    CreateFile('Hello, world!').clear_task()
     assert not taskdir_world.exists()       # task directory deleted
     assert taskdir_me.exists()              # other task directories are not deleted
     assert any(task_factory_dir.iterdir())  # whole task directory is not deleted
     check_output('world')                   # file recreated
 
     # Task directory can be deleted at all
-    CreateFile.clear_all()
+    CreateFile.clear_all_tasks()
     assert not taskdir_world.exists()           # task directory deleted
     assert not taskdir_me.exists()              # other task directories are also deleted
     assert not any(task_factory_dir.iterdir())  # whole task directory is deleted
@@ -177,19 +181,19 @@ class CountElem(Task):
 
 @infer_task_type
 class SummarizeParam(Task):
-    counts: RequiresDict[str, int] = Req()
+    d_counts: RequiresDict[str, int] = Req()
 
     def init(self, **params: Any):
-        self.params = params
-        self.container_keys = [k for k in params if isinstance(params[k], (list, dict))]
-        self.counts = {k: CountElem(params[k]) for k in self.container_keys}
+        self.a_params = params
+        self.a_container_keys = [k for k in params if isinstance(params[k], (list, dict))]
+        self.d_counts = {k: CountElem(params[k]) for k in self.a_container_keys}
 
     def main(self) -> dict[str, int | None]:
-        out: dict[str, int | None] = dict(self.counts)
-        out.update({k: None for k in self.params if k not in self.container_keys})
+        out: dict[str, int | None] = dict(self.d_counts)
+        out.update({k: None for k in self.a_params if k not in self.a_container_keys})
         return out
 
 
 def test_json_param():
-    res = SummarizeParam(x=[1, 2], y=dict(zip(range(3), 'abc')), z=42).run()
+    res = SummarizeParam(x=[1, 2], y=dict(zip(range(3), 'abc')), z=42).run_task()
     assert res == {'x': 2, 'y': 3, 'z': None}

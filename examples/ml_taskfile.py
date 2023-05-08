@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import Any, Generic, NewType, Protocol, TypeVar
 
 from cloudpickle import dump, load
-from checkpoint import Task, task, requires, TaskDirectory
+from checkpoint import infer_task_type, Task, TaskLike, DataPath, Requires, RequiresList
 
 
 # For demonstration
@@ -27,71 +27,88 @@ class PickleLoader(Generic[T_co]):
         return load(open(self.path, 'rb'))
 
 
-@task
-def load_data(name: str):
+@infer_task_type
+class LoadData(Task):
+    data = DataPath('data.txt')
 
-    @requires(TaskDirectory())
-    def __(path: Path) -> Loader[Data]:
+    def init(self, name: str):
+        self.name = name
+
+    def main(self) -> Loader[Data]:
         # Download a dataset ...
-        data_loader = PickleLoader(Data(f'<data: {name}>'), path / f'data.txt')
+        data_loader = PickleLoader(Data(f'<data: {self.name}>'), self.data)
         return data_loader
-    return __
 
 
-@task
-def preprocess_data(name: str, split_ratio: float, seed: int):
+@infer_task_type
+class PreprocessData(Task):
+    data_loader: Requires[Loader[Data]]
+    train_path = DataPath('train.txt')
+    valid_path = DataPath('valid.txt')
+    test_path = DataPath('test.txt')
 
-    @requires(TaskDirectory())
-    @requires(load_data(name))
-    def __(path: Path, data_loader: Loader[Data]) -> dict[str, Loader[Data]]:
-        data = data_loader.load()
+    def init(self, name: str, split_ratio: float, seed: int):
+        self.name = name
+        self.split_ratio = split_ratio
+        self.seed = seed
+        self.data_loader = LoadData(name)
+
+    def main(self) -> dict[str, Loader[Data]]:
+        data = self.data_loader.load()
         # Split the dataset at data_path into splits ...
-        train_loader = PickleLoader(Data('<train data>'), path / 'train.txt')
-        valid_loader = PickleLoader(Data('<valid data>'), path / 'train.txt')
-        test_loader = PickleLoader(Data('<test data>'), path / 'train.txt')
+        train_loader = PickleLoader(Data('<train data>'), self.train_path)
+        valid_loader = PickleLoader(Data('<valid data>'), self.valid_path)
+        test_loader = PickleLoader(Data('<test data>'), self.test_path)
         return {'train': train_loader, 'valid': valid_loader, 'test': test_loader}
-    return __
 
 
-@task
-def train_model(preprocessed_data: Task[dict[str, Loader[Data]]], train_config: dict, seed: int):
+@infer_task_type
+class TrainModel(Task):
+    data_dict: Requires[dict[str, Loader[Data]]]
+    trained_model_path = DataPath('trained.bin')
     
-    @requires(TaskDirectory())
-    @requires(preprocessed_data)
-    def __(path: Path, data_dict: dict[str, Loader[Data]]) -> Loader[Model]:
-        train_data = data_dict['train'].load()
-        valid_data = data_dict['valid'].load()
+    def init(self, preprocessed_data: TaskLike[dict[str, Loader[Data]]], train_config: dict, seed: int):
+        self.data_dict = preprocessed_data
+        self.train_config = train_config
+        self.seed = seed
+    
+    def main(self) -> Loader[Model]:
+        train_data = self.data_dict['train'].load()
+        valid_data = self.data_dict['valid'].load()
         # Train model with data and save it to trained_path ...
-        trained_path = path / f'trained.bin'
-        return PickleLoader(Model('<trained model>'), trained_path)
-    return __
+        return PickleLoader(Model('<trained model>'), self.trained_model_path)
 
 
-@task
-def test_model(preprocessed_data: Task[dict[str, Loader[Data]]], trained_model: Task[Loader[Model]]):
+@infer_task_type
+class TestModel(Task):
+    data_dict: Requires[dict[str, Loader[Data]]]
+    model: Requires[Loader[Model]]
+
+    def init(self, preprocessed_data: TaskLike[dict[str, Loader[Data]]], trained_model: TaskLike[Loader[Model]]):
+        self.data_dict = preprocessed_data
+        self.model = trained_model
     
-    @requires(preprocessed_data)
-    @requires(trained_model)
-    def __(dataset: dict[str, Loader[Data]], model_loader: Loader[Model]) -> dict[str, Any]:
-        test_data = dataset['test'].load()
-        model = model_loader.load()
+    def main(self) -> dict[str, Any]:
+        test_data = self.data_dict['test'].load()
+        model = self.model.load()
         # Evaluate model on test_data ...
         result = {'score': ...}
         return result
-    return __
 
 
-@task
-def main():
+@infer_task_type
+class Main(Task):
+    results: RequiresList[dict]
 
-    tasks: list[Task[dict]] = []
-    for i in range(10):
-        data = preprocess_data('mydata', split_ratio=.8, seed=i)
-        trained = train_model(preprocessed_data=data, train_config={'lr': .01}, seed=i)
-        result = test_model(preprocessed_data=data, trained_model=trained)
-        tasks.append(result)
+    def init(self):
+        tasks: list[TaskLike[dict]] = []
+        for i in range(10):
+            data = PreprocessData('mydata', split_ratio=.8, seed=i)
+            trained = TrainModel(preprocessed_data=data, train_config={'lr': .01}, seed=i)
+            result = TestModel(preprocessed_data=data, trained_model=trained)
+            tasks.append(result)
+        self.results = tasks
 
-    @requires(tasks)
-    def __(results: list[dict]) -> list[dict]:
-        return results
-    return __
+    def main(self) -> list[dict]:
+        print('running main')
+        return self.results
