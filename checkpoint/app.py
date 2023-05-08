@@ -1,14 +1,13 @@
 from __future__ import annotations
 from typing import Any
 from pathlib import Path
-import os
 import sys
 import json
 
 import click
 
 from .types import Context
-from .task import Task
+from .task import TaskType
 
 
 @click.command
@@ -44,7 +43,7 @@ def main(taskfile: Path, entrypoint: str, exec_type: str, max_workers: int, cach
 
     # Run the main task
     entrypoint_fn = getattr(module, entrypoint)
-    assert issubclass(entrypoint_fn, Task), \
+    assert issubclass(entrypoint_fn, TaskType), \
             f'Taskfile `{taskfile}` should contain a task(factory) `{entrypoint}`, but found `{entrypoint_fn}`.'
     task = entrypoint_fn()
     task.run_task_with_stats(rate_limits=rate_limits)

@@ -35,7 +35,7 @@ class TaskConfig(Generic[P, R]):
     """ Information specific to a task class (not instance) """
     def __init__(
             self,
-            task_class: Type[Task[P, R]],
+            task_class: Type[TaskType[P, R]],
             queue: str | None,
             compress_level: int,
             ) -> None:
@@ -60,7 +60,7 @@ class TaskConfig(Generic[P, R]):
 
 class TaskWorker(Generic[R]):
     @classmethod
-    def make(cls, config: TaskConfig[P, R], instance: Task[P, R], *args: P.args, **kwargs: P.kwargs) -> Self:
+    def make(cls, config: TaskConfig[P, R], instance: TaskType[P, R], *args: P.args, **kwargs: P.kwargs) -> Self:
         arg_key = _serialize_arguments(instance.init, *args, **kwargs)
         worker = config.worker_registry.get(arg_key, None)
         if worker is not None:
@@ -71,7 +71,7 @@ class TaskWorker(Generic[R]):
         config.worker_registry[arg_key] = worker
         return worker
 
-    def __init__(self, config: TaskConfig[..., R], instance: Task[..., R], arg_key: Json) -> None:
+    def __init__(self, config: TaskConfig[..., R], instance: TaskType[..., R], arg_key: Json) -> None:
         self.config = config
         self.instance = instance
         self.arg_key = arg_key
@@ -137,7 +137,7 @@ class TaskWorker(Generic[R]):
             shutil.rmtree(directory)
 
 
-class Task(Generic[P, R], ABC):
+class TaskType(Generic[P, R], ABC):
     task_config: TaskConfig[P, R]
 
     @abstractmethod
@@ -216,9 +216,9 @@ class TaskClassProtocol(Protocol[P, R]):
     def main(self) -> R: ...
 
 
-def infer_task_type(cls: Type[TaskClassProtocol[P, R]]) -> Type[Task[P, R]]:
-    assert issubclass(cls, Task), f'{cls} must inherit from {Task} to infer task type.'
-    return cast(Type[Task[P, R]], cls)
+def infer_task_type(cls: Type[TaskClassProtocol[P, R]]) -> Type[TaskType[P, R]]:
+    assert issubclass(cls, TaskType), f'{cls} must inherit from {TaskType} to infer task type.'
+    return cast(Type[TaskType[P, R]], cls)
 
 
 def _serialize_function(fn: Callable[..., Any]) -> str:
@@ -238,7 +238,7 @@ def _serialize_arguments(fn: Callable[P, Any], *args: P.args, **kwargs: P.kwargs
 
 class CustomJSONEncoder(json.JSONEncoder):
     def default(self, o):
-        if isinstance(o, Task):
+        if isinstance(o, TaskType):
             return {'__task__': o.task_worker.to_tuple()}
         else:
             # Let the base class default method raise the TypeError
@@ -250,18 +250,18 @@ class Req(Generic[T, R]):
         self.public_name = name
         self.private_name = '_requires__' + name
 
-    def __set__(self, obj: Task[..., Any], value: T) -> None:
+    def __set__(self, obj: TaskType[..., Any], value: T) -> None:
         setattr(obj, self.private_name, value)
 
     @overload
-    def __get__(self: Req[TaskLike[U], U], obj: Task[..., Any], _=None) -> U: ...
+    def __get__(self: Req[TaskLike[U], U], obj: TaskType[..., Any], _=None) -> U: ...
     @overload
-    def __get__(self: Req[list[TaskLike[U]], list[U]], obj: Task[..., Any], _=None) -> list[U]: ...
+    def __get__(self: Req[list[TaskLike[U]], list[U]], obj: TaskType[..., Any], _=None) -> list[U]: ...
     @overload
-    def __get__(self: Req[dict[K, TaskLike[U]], dict[K, U]], obj: Task[..., Any], _=None) -> dict[K, U]: ...
-    def __get__(self, obj: Task[..., Any], _=None) -> Any:
+    def __get__(self: Req[dict[K, TaskLike[U]], dict[K, U]], obj: TaskType[..., Any], _=None) -> dict[K, U]: ...
+    def __get__(self, obj: TaskType[..., Any], _=None) -> Any:
         x = getattr(obj, self.private_name)
-        if isinstance(x, Task):
+        if isinstance(x, TaskType):
             return x.task_worker.get_result()
         elif isinstance(x, list):
             return [t.task_worker.get_result() for t in x]
@@ -272,10 +272,10 @@ class Req(Generic[T, R]):
         else:
             raise TypeError(f'Unsupported requirement type: {type(x)}')
 
-    def get_task_list(self, obj: Task[..., Any]) -> list[Task[..., Any]]:
+    def get_task_list(self, obj: TaskType[..., Any]) -> list[TaskType[..., Any]]:
         x = getattr(obj, self.private_name, None)
         assert x is not None, f'Requirement `{self.public_name}` is not set in {obj}.'
-        if isinstance(x, Task):
+        if isinstance(x, TaskType):
             return [x]
         elif isinstance(x, list):
             return x
@@ -287,30 +287,31 @@ class Req(Generic[T, R]):
             raise TypeError(f'Unsupported requirement type: {type(x)}')
 
 
-@dataclass
-class Const(Generic[T]):
-    value: T
+@dataclass(frozen=True)
+class Const(Generic[R]):
+    value: R
 
-    def get_result(self) -> T:
+    def get_result(self) -> R:
         return self.value
 
 
-TaskLike = Task[..., U] | Const[U]
+Task = TaskType[..., R]
+TaskLike = Task[R] | Const[R]
 
 
-Requires = Req[TaskLike[U], U]
-RequiresList = Req[Sequence[TaskLike[U]], list[U]]
-RequiresDict = Req[Mapping[K, TaskLike[U]], dict[K, U]]
+Requires = Req[TaskLike[R], R]
+RequiresList = Req[Sequence[TaskLike[R]], list[R]]
+RequiresDict = Req[Mapping[K, TaskLike[R]], dict[K, R]]
 
 
 class DataPath:
     def __init__(self, name: str) -> None:
         self.name = name
 
-    def __get__(self, obj: Task[..., Any], _=None) -> Path:
+    def __get__(self, obj: TaskType[..., Any], _=None) -> Path:
         return obj.task_worker.directory / self.name
 
 
 class DataDir:
-    def __get__(self, obj: Task[..., Any], _=None) -> Path:
+    def __get__(self, obj: TaskType[..., Any], _=None) -> Path:
         return obj.task_worker.directory

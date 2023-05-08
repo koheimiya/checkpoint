@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import Any, Generic, NewType, Protocol, TypeVar
 
 from cloudpickle import dump, load
-from checkpoint import infer_task_type, Task, TaskLike, DataPath, Requires, RequiresList
+from checkpoint import infer_task_type, Task, DataPath, Requires, RequiresList
 
 
 # For demonstration
@@ -67,7 +67,7 @@ class TrainModel(Task):
     data_dict: Requires[dict[str, Loader[Data]]]
     trained_model_path = DataPath('trained.bin')
     
-    def init(self, preprocessed_data: TaskLike[dict[str, Loader[Data]]], train_config: dict, seed: int):
+    def init(self, preprocessed_data: Task[dict[str, Loader[Data]]], train_config: dict, seed: int):
         self.data_dict = preprocessed_data
         self.train_config = train_config
         self.seed = seed
@@ -84,7 +84,7 @@ class TestModel(Task):
     data_dict: Requires[dict[str, Loader[Data]]]
     model: Requires[Loader[Model]]
 
-    def init(self, preprocessed_data: TaskLike[dict[str, Loader[Data]]], trained_model: TaskLike[Loader[Model]]):
+    def init(self, preprocessed_data: Task[dict[str, Loader[Data]]], trained_model: Task[Loader[Model]]):
         self.data_dict = preprocessed_data
         self.model = trained_model
     
@@ -101,7 +101,7 @@ class Main(Task):
     results: RequiresList[dict]
 
     def init(self):
-        tasks: list[TaskLike[dict]] = []
+        tasks: list[Task[dict]] = []
         for i in range(10):
             data = PreprocessData('mydata', split_ratio=.8, seed=i)
             trained = TrainModel(preprocessed_data=data, train_config={'lr': .01}, seed=i)
