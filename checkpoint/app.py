@@ -3,6 +3,7 @@ from typing import Any
 from pathlib import Path
 import sys
 import json
+import pprint
 
 import click
 
@@ -46,7 +47,9 @@ def main(taskfile: Path, entrypoint: str, exec_type: str, max_workers: int, cach
     assert issubclass(entrypoint_fn, TaskType), \
             f'Taskfile `{taskfile}` should contain a task(factory) `{entrypoint}`, but found `{entrypoint_fn}`.'
     task = entrypoint_fn()
-    task.run_graph_with_stats(rate_limits=rate_limits)
+    _, stats = task.run_graph_with_stats(rate_limits=rate_limits)
+    print('Execution summary:')
+    pprint.pprint(stats['stats'], sort_dicts=False)
     return 0
 
 

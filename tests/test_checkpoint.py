@@ -32,7 +32,7 @@ def test_graph():
     6...x
     """
     Choose.clear_all_tasks()
-    ans, stats = Choose(6, 3).run_graph_with_stats(rate_limits={Choose.task_config.channels: 2})
+    ans, stats = Choose(6, 3).run_graph_with_stats(rate_limits={Choose.task_config.name: 2})
     assert ans == 20
     assert sum(stats['stats'].values()) == 15
 
