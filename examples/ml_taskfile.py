@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import Any, Generic, NewType, Protocol, TypeVar
 
 from cloudpickle import dump, load
-from checkpoint import infer_task_type, Task, DataPath, Requires, RequiresList
+from checkpoint import infer_task_type, Task, Requires, RequiresList
 
 
 # For demonstration
@@ -29,43 +29,37 @@ class PickleLoader(Generic[T_co]):
 
 @infer_task_type
 class LoadData(Task):
-    data = DataPath('data.txt')
-
     def build_task(self, name: str):
         self.name = name
 
     def run_task(self) -> Loader[Data]:
         # Download a dataset ...
-        data_loader = PickleLoader(Data(f'<data: {self.name}>'), self.data)
+        data_loader = PickleLoader(Data(f'<data: {self.name}>'), self.task_directory / 'data.txt')
         return data_loader
 
 
 @infer_task_type
 class PreprocessData(Task):
-    data_loader: Requires[Loader[Data]]
-    train_path = DataPath('train.txt')
-    valid_path = DataPath('valid.txt')
-    test_path = DataPath('test.txt')
+    raw_data: Requires[Loader[Data]]
 
     def build_task(self, name: str, split_ratio: float, seed: int):
         self.name = name
         self.split_ratio = split_ratio
         self.seed = seed
-        self.data_loader = LoadData(name)
+        self.raw_data = LoadData(name)
 
     def run_task(self) -> dict[str, Loader[Data]]:
-        data = self.data_loader.load()
+        data = self.raw_data.load()
         # Split the dataset at data_path into splits ...
-        train_loader = PickleLoader(Data('<train data>'), self.train_path)
-        valid_loader = PickleLoader(Data('<valid data>'), self.valid_path)
-        test_loader = PickleLoader(Data('<test data>'), self.test_path)
+        train_loader = PickleLoader(Data('<train data>'), self.task_directory / 'train.txt')
+        valid_loader = PickleLoader(Data('<valid data>'), self.task_directory / 'valid.txt')
+        test_loader = PickleLoader(Data('<test data>'), self.task_directory / 'test.txt')
         return {'train': train_loader, 'valid': valid_loader, 'test': test_loader}
 
 
 @infer_task_type
 class TrainModel(Task):
     data_dict: Requires[dict[str, Loader[Data]]]
-    trained_model_path = DataPath('trained.bin')
     
     def build_task(self, preprocessed_data: Task[dict[str, Loader[Data]]], train_config: dict, seed: int):
         self.data_dict = preprocessed_data
@@ -76,7 +70,7 @@ class TrainModel(Task):
         train_data = self.data_dict['train'].load()
         valid_data = self.data_dict['valid'].load()
         # Train model with data and save it to trained_path ...
-        return PickleLoader(Model('<trained model>'), self.trained_model_path)
+        return PickleLoader(Model('<trained model>'), self.task_directory / 'trained.bin')
 
 
 @infer_task_type

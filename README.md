@@ -172,21 +172,19 @@ class LargeOutputTask(Task, compress_level=-1):
 
 ### Data directories
 
-Use `DataPath(name)` to get a fresh path dedicated to each task.
-The parent directory is automatically created at
+Use `task.task_directory` to get a fresh path dedicated to each task.
+The directory is automatically created at
 `{$CP_CACHE_DIR:-./.cache}/checkpoint/{module_name}.{task_name}/data/{cryptic_task_id}`
 and the contents of the directory are cleared at each task call and persist until the task is cleared.
 ```python
-from checkpoint import DataPath
-
 class TrainModel(Task):
-    model_path = DataPath('model.bin')
     ...
 
     def run_task(self) -> str:
         ...
-        model.save(self.model_path)  # Gives `Path('.../model.bin')`
-        return self.model_path
+        model_path = self.task_directory / 'model.bin'
+        model.save(model_path)
+        return model_path
 ```
 
 ### Execution policy configuration
@@ -218,7 +216,7 @@ SomeDownstreamTask().run_graph(rate_limits={'<gpu>': 1})
 SomeDownstreamTask().run_graph(rate_limits={'<memory>': 1})
 
 # Task-level concurrency control
-SomeDownstreamTask().run_graph(rate_limits={TaskUsingGPU.task_config.name: 1})
+SomeDownstreamTask().run_graph(rate_limits={TaskUsingGPU.task_name: 1})
 
 ```
 

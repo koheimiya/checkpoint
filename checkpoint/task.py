@@ -94,7 +94,7 @@ class TaskWorker(Generic[R]):
         prerequisites: list[TaskWorker[Any]] = []
         for _, v in inspect.getmembers(cls):
             if isinstance(v, Req):
-                prerequisites.extend([task.task_worker for task in v.get_task_list(inst)])
+                prerequisites.extend([task._task_worker for task in v.get_task_list(inst)])
         assert all(isinstance(p, TaskWorker) for p in prerequisites)
         return prerequisites
 
@@ -132,14 +132,17 @@ class TaskWorker(Generic[R]):
 
     def clear(self) -> None:
         db = self.config.db
-        db.delete(self.arg_key)
+        try:
+            db.delete(self.arg_key)
+        except KeyError:
+            pass
         directory = self._directory_uninit
         if directory.exists():
             shutil.rmtree(directory)
 
 
 class TaskType(Generic[P, R], ABC):
-    task_config: TaskConfig[P, R]
+    _task_config: TaskConfig[P, R]
 
     @abstractmethod
     def build_task(self, *args: P.args, **kwargs: P.kwargs) -> None:
@@ -172,20 +175,29 @@ class TaskType(Generic[P, R], ABC):
                 req.__set_name__(None, k)
                 setattr(cls, k, req)
 
-        cls.task_config = TaskConfig(task_class=cls, channels=channels, compress_level=compress_level)
+        cls._task_config = TaskConfig(task_class=cls, channels=channels, compress_level=compress_level)
         super().__init_subclass__(**kwargs)
 
     def __init__(self, *args: P.args, **kwargs: P.kwargs) -> None:
-        self.task_worker: TaskWorker[R] = TaskWorker.make(
-                self.task_config, self, *args, **kwargs
+        self._task_worker: TaskWorker[R] = TaskWorker.make(
+                self._task_config, self, *args, **kwargs
                 )
 
     @classmethod
+    @property
+    def task_name(cls) -> str:
+        return cls._task_config.name
+
+    @property
+    def task_directory(self) -> Path:
+        return self._task_worker.directory
+
+    @classmethod
     def clear_all_tasks(cls) -> None:
-        cls.task_config.clear_all()
+        cls._task_config.clear_all()
 
     def clear_task(self) -> None:
-        self.task_worker.clear()
+        self._task_worker.clear()
 
     def run_graph(
             self, *,
@@ -211,19 +223,17 @@ class TaskType(Generic[P, R], ABC):
             ) -> tuple[R, dict[str, Any]]:
         if detect_source_change is None:
             detect_source_change = Context.detect_source_change
-        graph = TaskGraph.build_from(self.task_worker, detect_source_change=detect_source_change)
+        graph = TaskGraph.build_from(self._task_worker, detect_source_change=detect_source_change)
 
         if executor is None:
             executor = Context.get_executor(max_workers=max_workers)
         else:
             assert max_workers is None
         stats = run_task_graph(graph=graph, executor=executor, rate_limits=rate_limits, dump_graphs=dump_generations)
-        return self.task_worker.get_result(), stats
+        return self._task_worker.get_result(), stats
 
 
 class TaskClassProtocol(Protocol[P, R]):
-    task_config: ClassVar[TaskConfig]
-    task_worker: TaskWorker
     def build_task(self, *args: P.args, **kwargs: P.kwargs) -> None: ...
     def run_task(self) -> R: ...
 
@@ -251,7 +261,7 @@ def _serialize_arguments(fn: Callable[P, Any], *args: P.args, **kwargs: P.kwargs
 class CustomJSONEncoder(json.JSONEncoder):
     def default(self, o):
         if isinstance(o, TaskType):
-            return {'__task__': o.task_worker.to_tuple()}
+            return {'__task__': o._task_worker.to_tuple()}
         else:
             # Let the base class default method raise the TypeError
             return super().default(o)
@@ -273,12 +283,17 @@ class Req(Generic[T, R]):
     def __get__(self: Req[dict[K, TaskLike[U]], dict[K, U]], obj: TaskType[..., Any], _=None) -> dict[K, U]: ...
     def __get__(self, obj: TaskType[..., Any], _=None) -> Any:
         x = getattr(obj, self.private_name)
+
+        def get_worker(task: Task[Any]) -> TaskWorker[Any]:
+            assert isinstance(task, TaskType)
+            return task._task_worker
+
         if isinstance(x, TaskType):
-            return x.task_worker.get_result()
+            return get_worker(x).get_result()
         elif isinstance(x, list):
-            return [t.task_worker.get_result() for t in x]
+            return [get_worker(t).get_result() for t in x]
         elif isinstance(x, dict):
-            return {k: v.task_worker.get_result() for k, v in x.items()}
+            return {k: get_worker(v).get_result() for k, v in x.items()}
         elif isinstance(x, Const):
             return x.value
         else:
@@ -314,16 +329,3 @@ TaskLike = Task[R] | Const[R]
 Requires = Req[TaskLike[R], R]
 RequiresList = Req[Sequence[TaskLike[R]], list[R]]
 RequiresDict = Req[Mapping[K, TaskLike[R]], dict[K, R]]
-
-
-class DataPath:
-    def __init__(self, name: str) -> None:
-        self.name = name
-
-    def __get__(self, obj: TaskType[..., Any], _=None) -> Path:
-        return obj.task_worker.directory / self.name
-
-
-class DataDir:
-    def __get__(self, obj: TaskType[..., Any], _=None) -> Path:
-        return obj.task_worker.directory

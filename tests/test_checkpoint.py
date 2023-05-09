@@ -1,6 +1,6 @@
 from typing import Any
 import pytest
-from checkpoint import infer_task_type, Task, Req, Requires, Const, RequiresDict, DataPath
+from checkpoint import infer_task_type, Task, Req, Requires, Const, RequiresDict
 
 
 @infer_task_type
@@ -32,7 +32,7 @@ def test_graph():
     6...x
     """
     Choose.clear_all_tasks()
-    ans, stats = Choose(6, 3).run_graph_with_stats(rate_limits={Choose.task_config.name: 2})
+    ans, stats = Choose(6, 3).run_graph_with_stats(rate_limits={Choose.task_name: 2})
     assert ans == 20
     assert sum(stats['stats'].values()) == 15
 
@@ -58,7 +58,7 @@ def test_graph():
 
 
 @infer_task_type
-class TaskA(Task):
+class TaskA(Task, channel=['<mychan>', '<another_chan>']):
     def build_task(self): ...
 
     def run_task(self) -> str:
@@ -66,7 +66,7 @@ class TaskA(Task):
 
 
 @infer_task_type
-class TaskB(Task, channel='<myqueue>'):
+class TaskB(Task, channel='<mychan>'):
     def build_task(self): ...
     
     def run_task(self) -> str:
@@ -90,9 +90,9 @@ def test_multiple_tasks():
     TaskA.clear_all_tasks()
     TaskB.clear_all_tasks()
     TaskC.clear_all_tasks()
-    assert TaskC().run_graph() == 'hello, world'
-    assert TaskB.task_config.channels == (TaskB.task_config.name, '<myqueue>')
-    assert TaskC.task_config.db.compress_level == -1
+    assert TaskC().run_graph(rate_limits={'<mychan>': 1}) == 'hello, world'
+    assert TaskB._task_config.channels == (TaskB._task_config.name, '<mychan>')
+    assert TaskC._task_config.db.compress_level == -1
 
 
 @infer_task_type
@@ -109,15 +109,15 @@ def test_raise():
 
 @infer_task_type
 class CreateFile(Task):
-    outpath = DataPath('test.txt')
 
     def build_task(self, content: str):
         self.content = content
 
     def run_task(self) -> str:
-        with open(self.outpath, 'w') as f:
+        outpath = self.task_directory / 'test.txt'
+        with open(outpath, 'w') as f:
             f.write(self.content)
-        return str(self.outpath)
+        return str(outpath)
 
 
 @infer_task_type
@@ -135,9 +135,9 @@ class GreetWithFile(Task):
 def test_requires_directory():
     CreateFile.clear_all_tasks()
     GreetWithFile.clear_all_tasks()
-    taskdir_world = CreateFile('Hello, world!').task_worker._directory_uninit
-    taskdir_me = CreateFile('Hello, me!').task_worker._directory_uninit
-    task_factory_dir = CreateFile.task_config.data_directory
+    taskdir_world = CreateFile('Hello, world!')._task_worker._directory_uninit
+    taskdir_me = CreateFile('Hello, me!')._task_worker._directory_uninit
+    task_factory_dir = CreateFile._task_config.data_directory
 
     def check_output(name: str):
         assert GreetWithFile(name).run_graph() == f'Hello, {name}!'

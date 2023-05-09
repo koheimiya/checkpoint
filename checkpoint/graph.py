@@ -159,7 +159,8 @@ def run_task_graph(
                     free = min(rate_limits[q] - occupied[q] for q in queue if q in rate_limits)
                     to_submit, to_hold = keys[:free], keys[free:]
                     for q in queue:
-                        occupied[q] += len(to_submit)
+                        if q in occupied:
+                            occupied[q] += len(to_submit)
                     if to_hold:
                         leftover[queue] = to_hold
                 else:
