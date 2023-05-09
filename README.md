@@ -33,7 +33,7 @@ class Choose(Task):
     prev1: Requires[int] = Req()
     prev2: Requires[int] = Req()
 
-    def init(self, n: int, k: int):
+    def build_task(self, n: int, k: int):
         # The prerequisite tasks and the other instance attributes are prepared here.
         # It thus recursively defines all the tasks we need to run this task,
         # i.e., the entire upstream workflow.
@@ -48,7 +48,7 @@ class Choose(Task):
         else:
             raise ValueError(f'{(n, k)}')
 
-    def main(self) -> int:
+    def run_task(self) -> int:
         # Here we define the main computation of the task,
         # which is delayed until it is necessary.
 
@@ -86,12 +86,12 @@ Choose.clear_all_tasks()
 The arguments of the `init` method can be anything JSON serializable:
 ```python
 class T1(Task):
-    def init(self, **param1):
+    def build_task(self, **param1):
         ...
     ...
 
 class T2(Task):
-    def init(self, **param2):
+    def build_task(self, **param2):
         ...
     ...
 
@@ -99,11 +99,11 @@ class T3(Task):
     x1 = Req()
     x2 = Req()
 
-    def init(self, json_params):
+    def build_task(self, json_params):
         self.x1 = T1(**json_params['param1'])
         self.x2 = T2(**json_params['param2'])
 
-    def main(self):
+    def run_task(self):
         ...
 
 result = T3({'param1': { ... }, 'param2': { ... }}).run_graph()
@@ -115,30 +115,30 @@ Dataset = ...  # Some complex data structure
 Model = ...    # Some complex data structure
 
 class LoadDataset(Task):
-    def init(self):
+    def build_task(self):
         pass
 
-    def main(self) -> Dataset:
+    def run_task(self) -> Dataset:
         ...
 
 class TrainModel(Task):
     dataset: Requires[Datset]
 
-    def init(self, dataset_task: Task[Dataset]):
+    def build_task(self, dataset_task: Task[Dataset]):
         self.dataset = dataset_task
 
-    def main(self) -> Model:
+    def run_task(self) -> Model:
         ...
     
 class ScoreModel(Task):
     dataset: Requires[Datset]
     model: Requires[Model]
 
-    def init(self, dataset_task: Task[Dataset], model_task: Task[Model]):
+    def build_task(self, dataset_task: Task[Dataset], model_task: Task[Model]):
         self.dataset = dataset_task
         self.model = model_task
 
-    def main(self) -> float:
+    def run_task(self) -> float:
         ...
 
 
@@ -156,10 +156,10 @@ from checkpoint import RequiresDict
 class SummarizeScores(Task):
     scores: RequiresDict[str, float] = Req()  # Again, type annotation or assignment may be omitted.
 
-    def init(self, task_dict: dict[str, Task[float]]):
+    def build_task(self, task_dict: dict[str, Task[float]]):
         self.scores = task_dict
 
-    def main(self) -> float:
+    def run_task(self) -> float:
         return sum(self.scores.values()) / len(self.scores)  # We have access to the dict of the results.
 ```
 
@@ -183,7 +183,7 @@ class TrainModel(Task):
     model_path = DataPath('model.bin')
     ...
 
-    def main(self) -> str:
+    def run_task(self) -> str:
         ...
         model.save(self.model_path)  # Gives `Path('.../model.bin')`
         return self.model_path
