@@ -31,10 +31,10 @@ class PickleLoader(Generic[T_co]):
 class LoadData(Task):
     data = DataPath('data.txt')
 
-    def init(self, name: str):
+    def build_task(self, name: str):
         self.name = name
 
-    def main(self) -> Loader[Data]:
+    def run_task(self) -> Loader[Data]:
         # Download a dataset ...
         data_loader = PickleLoader(Data(f'<data: {self.name}>'), self.data)
         return data_loader
@@ -47,13 +47,13 @@ class PreprocessData(Task):
     valid_path = DataPath('valid.txt')
     test_path = DataPath('test.txt')
 
-    def init(self, name: str, split_ratio: float, seed: int):
+    def build_task(self, name: str, split_ratio: float, seed: int):
         self.name = name
         self.split_ratio = split_ratio
         self.seed = seed
         self.data_loader = LoadData(name)
 
-    def main(self) -> dict[str, Loader[Data]]:
+    def run_task(self) -> dict[str, Loader[Data]]:
         data = self.data_loader.load()
         # Split the dataset at data_path into splits ...
         train_loader = PickleLoader(Data('<train data>'), self.train_path)
@@ -67,12 +67,12 @@ class TrainModel(Task):
     data_dict: Requires[dict[str, Loader[Data]]]
     trained_model_path = DataPath('trained.bin')
     
-    def init(self, preprocessed_data: Task[dict[str, Loader[Data]]], train_config: dict, seed: int):
+    def build_task(self, preprocessed_data: Task[dict[str, Loader[Data]]], train_config: dict, seed: int):
         self.data_dict = preprocessed_data
         self.train_config = train_config
         self.seed = seed
     
-    def main(self) -> Loader[Model]:
+    def run_task(self) -> Loader[Model]:
         train_data = self.data_dict['train'].load()
         valid_data = self.data_dict['valid'].load()
         # Train model with data and save it to trained_path ...
@@ -84,11 +84,11 @@ class TestModel(Task):
     data_dict: Requires[dict[str, Loader[Data]]]
     model: Requires[Loader[Model]]
 
-    def init(self, preprocessed_data: Task[dict[str, Loader[Data]]], trained_model: Task[Loader[Model]]):
+    def build_task(self, preprocessed_data: Task[dict[str, Loader[Data]]], trained_model: Task[Loader[Model]]):
         self.data_dict = preprocessed_data
         self.model = trained_model
     
-    def main(self) -> dict[str, Any]:
+    def run_task(self) -> dict[str, Any]:
         test_data = self.data_dict['test'].load()
         model = self.model.load()
         # Evaluate model on test_data ...
@@ -100,7 +100,7 @@ class TestModel(Task):
 class Main(Task):
     results: RequiresList[dict]
 
-    def init(self):
+    def build_task(self):
         tasks: list[Task[dict]] = []
         for i in range(10):
             data = PreprocessData('mydata', split_ratio=.8, seed=i)
@@ -109,6 +109,6 @@ class Main(Task):
             tasks.append(result)
         self.results = tasks
 
-    def main(self) -> list[dict]:
+    def run_task(self) -> list[dict]:
         print('running main')
         return self.results

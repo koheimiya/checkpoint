@@ -16,10 +16,13 @@ from .types import Json, TaskKey
 LOGGER = logging.getLogger(__name__)
 
 
+ChannelLabels = tuple[str, ...]
+
+
 @runtime_checkable
 class TaskHandlerProtocol(Protocol):
     @property
-    def queue(self) -> str: ...
+    def channels(self) -> ChannelLabels: ...
     @property
     def source_timestamp(self) -> datetime: ...
     def to_tuple(self) -> TaskKey: ...
@@ -88,17 +91,17 @@ class TaskGraph:
         TR.add_nodes_from(self.G.nodes(data=True))
         self.G = TR
 
-    def get_initial_tasks(self) -> dict[str, list[TaskKey]]:
+    def get_initial_tasks(self) -> dict[ChannelLabels, list[TaskKey]]:
         leaves = [x for x in self.G if self.G.in_degree(x) == 0]
-        return self._group_by_queue(leaves)
+        return self._group_by_channels(leaves)
 
-    def _group_by_queue(self, nodes: list[TaskKey]) -> dict[str, list[TaskKey]]:
+    def _group_by_channels(self, nodes: list[TaskKey]) -> dict[ChannelLabels, list[TaskKey]]:
         out = defaultdict(list)
         for x in nodes:
-            out[self.get_task(x).queue].append(x)
+            out[self.get_task(x).channels].append(x)
         return out
 
-    def pop_with_new_leaves(self, x: TaskKey, disallow_non_leaf: bool = True) -> dict[str, list[TaskKey]]:
+    def pop_with_new_leaves(self, x: TaskKey, disallow_non_leaf: bool = True) -> dict[ChannelLabels, list[TaskKey]]:
         if disallow_non_leaf:
             assert not list(self.G.predecessors(x))
 
@@ -108,7 +111,7 @@ class TaskGraph:
                 new_leaves.append(y)
 
         self.G.remove_node(x)
-        return self._group_by_queue(new_leaves)
+        return self._group_by_channels(new_leaves)
 
     def get_nodes_by_task(self) -> dict[str, list[Json]]:
         out: dict[str, list[Json]] = defaultdict(list)
@@ -137,7 +140,7 @@ def run_task_graph(
 
     # Execute tasks
     standby = graph.get_initial_tasks()
-    in_process: set[Future[tuple[str, TaskKey]]] = set()
+    in_process: set[Future[tuple[ChannelLabels, TaskKey]]] = set()
     with executor as executor:
         while standby or in_process:
             # Log some stats
@@ -150,12 +153,13 @@ def run_task_graph(
                 info['generations'].append(graph.get_nodes_by_task())
 
             # Submit all leaf tasks
-            leftover: dict[str, list[TaskKey]] = {}
+            leftover: dict[ChannelLabels, list[TaskKey]] = {}
             for queue, keys in standby.items():
-                if queue in rate_limits:
-                    free = rate_limits[queue] - occupied[queue]
+                if any(q in rate_limits for q in queue):
+                    free = min(rate_limits[q] - occupied[q] for q in queue if q in rate_limits)
                     to_submit, to_hold = keys[:free], keys[free:]
-                    occupied[queue] += len(to_submit)
+                    for q in queue:
+                        occupied[q] += len(to_submit)
                     if to_hold:
                         leftover[queue] = to_hold
                 else:
@@ -174,9 +178,10 @@ def run_task_graph(
                 queue_done, x_done = done_future.result()
 
                 # Update occupied
-                if queue_done in occupied:
-                    occupied[queue_done] -= 1
-                    assert occupied[queue_done] >= 0
+                for q in queue_done:
+                    if q in occupied:
+                        occupied[q] -= 1
+                        assert occupied[q] >= 0
 
                 # Remove node from graph
                 ys = graph.pop_with_new_leaves(x_done)
@@ -191,7 +196,7 @@ def run_task_graph(
     return info
 
 
-def _run_task(queue: str, task_data: bytes) -> tuple[str, TaskKey]:  # queue, (dbname, key)
+def _run_task(queue: ChannelLabels, task_data: bytes) -> tuple[ChannelLabels, TaskKey]:  # queue, (dbname, key)
     task = cloudpickle.loads(task_data)
     assert isinstance(task, TaskHandlerProtocol)
     task.set_result()

@@ -8,7 +8,7 @@ class Choose(Task):
     prev1: Requires[int] = Req()
     prev2: Requires[int] = Req()
 
-    def init(self, n: int, k: int):
+    def build_task(self, n: int, k: int):
         if 0 < k < n:
             self.prev1 = Choose(n - 1, k - 1)
             self.prev2 = Choose(n - 1, k)
@@ -16,7 +16,7 @@ class Choose(Task):
             self.prev1 = Const(0)
             self.prev2 = Const(1)
 
-    def main(self) -> int:
+    def run_task(self) -> int:
         return self.prev1 + self.prev2
 
 
@@ -32,12 +32,12 @@ def test_graph():
     6...x
     """
     Choose.clear_all_tasks()
-    ans, stats = Choose(6, 3).run_task_with_stats(rate_limits={Choose.task_config.queue: 2})
+    ans, stats = Choose(6, 3).run_graph_with_stats(rate_limits={Choose.task_config.channels: 2})
     assert ans == 20
     assert sum(stats['stats'].values()) == 15
 
     """ 0 caches: """
-    ans, stats = Choose(6, 3).run_task_with_stats()
+    ans, stats = Choose(6, 3).run_graph_with_stats()
     assert ans == 20
     assert sum(stats['stats'].values()) == 0
 
@@ -52,24 +52,24 @@ def test_graph():
     6...x
     """
     Choose(3, 3).clear_task()
-    ans, stats = Choose(6, 3).run_task_with_stats()
+    ans, stats = Choose(6, 3).run_graph_with_stats()
     assert ans == 20
     assert sum(stats['stats'].values()) == 4
 
 
 @infer_task_type
 class TaskA(Task):
-    def init(self): ...
+    def build_task(self): ...
 
-    def main(self) -> str:
+    def run_task(self) -> str:
         return 'hello'
 
 
 @infer_task_type
-class TaskB(Task, queue='myqueue'):
-    def init(self): ...
+class TaskB(Task, channel='<myqueue>'):
+    def build_task(self): ...
     
-    def main(self) -> str:
+    def run_task(self) -> str:
         return 'world'
 
 
@@ -78,11 +78,11 @@ class TaskC(Task, compress_level=-1):
     a: Requires[str] = Req()
     b: Requires[str] = Req()
 
-    def init(self):
+    def build_task(self):
         self.a = TaskA()
         self.b = TaskB()
     
-    def main(self) -> str:
+    def run_task(self) -> str:
         return f'{self.a}, {self.b}'
 
 
@@ -90,31 +90,31 @@ def test_multiple_tasks():
     TaskA.clear_all_tasks()
     TaskB.clear_all_tasks()
     TaskC.clear_all_tasks()
-    assert TaskC().run_task() == 'hello, world'
-    assert TaskB.task_config.queue == 'myqueue'
+    assert TaskC().run_graph() == 'hello, world'
+    assert TaskB.task_config.channels == (TaskB.task_config.name, '<myqueue>')
     assert TaskC.task_config.db.compress_level == -1
 
 
 @infer_task_type
 class TaskRaise(Task):
-    def init(self): ...
-    def main(self):
+    def build_task(self): ...
+    def run_task(self):
         raise ValueError(42)
 
 
 def test_raise():
     with pytest.raises(ValueError):
-        TaskRaise().run_task()
+        TaskRaise().run_graph()
 
 
 @infer_task_type
 class CreateFile(Task):
     outpath = DataPath('test.txt')
 
-    def init(self, content: str):
+    def build_task(self, content: str):
         self.content = content
 
-    def main(self) -> str:
+    def run_task(self) -> str:
         with open(self.outpath, 'w') as f:
             f.write(self.content)
         return str(self.outpath)
@@ -124,10 +124,10 @@ class CreateFile(Task):
 class GreetWithFile(Task):
     filepath: Requires[str] = Req()
 
-    def init(self, name: str):
+    def build_task(self, name: str):
         self.filepath = CreateFile(f'Hello, {name}!')
 
-    def main(self) -> str:
+    def run_task(self) -> str:
         with open(self.filepath, 'r') as f:
             return f.read()
 
@@ -140,7 +140,7 @@ def test_requires_directory():
     task_factory_dir = CreateFile.task_config.data_directory
 
     def check_output(name: str):
-        assert GreetWithFile(name).run_task() == f'Hello, {name}!'
+        assert GreetWithFile(name).run_graph() == f'Hello, {name}!'
 
     assert not taskdir_world.exists()
     assert not taskdir_me.exists()
@@ -172,10 +172,10 @@ def test_requires_directory():
 
 @infer_task_type
 class CountElem(Task):
-    def init(self, x: list | dict):
+    def build_task(self, x: list | dict):
         self.x = x
 
-    def main(self) -> int:
+    def run_task(self) -> int:
         return len(self.x)
 
 
@@ -183,17 +183,17 @@ class CountElem(Task):
 class SummarizeParam(Task):
     d_counts: RequiresDict[str, int] = Req()
 
-    def init(self, **params: Any):
+    def build_task(self, **params: Any):
         self.a_params = params
         self.a_container_keys = [k for k in params if isinstance(params[k], (list, dict))]
         self.d_counts = {k: CountElem(params[k]) for k in self.a_container_keys}
 
-    def main(self) -> dict[str, int | None]:
+    def run_task(self) -> dict[str, int | None]:
         out: dict[str, int | None] = dict(self.d_counts)
         out.update({k: None for k in self.a_params if k not in self.a_container_keys})
         return out
 
 
 def test_json_param():
-    res = SummarizeParam(x=[1, 2], y=dict(zip(range(3), 'abc')), z=42).run_task()
+    res = SummarizeParam(x=[1, 2], y=dict(zip(range(3), 'abc')), z=42).run_graph()
     assert res == {'x': 2, 'y': 3, 'z': None}

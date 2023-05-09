@@ -1,5 +1,6 @@
 from __future__ import annotations
 from abc import ABC, abstractmethod
+from collections.abc import Iterable
 from typing import Callable, ClassVar, Generic, Mapping, Protocol, Self, Sequence, Type, TypeVar, Any, cast, overload, get_origin
 from typing_extensions import ParamSpec
 from dataclasses import dataclass
@@ -36,14 +37,14 @@ class TaskConfig(Generic[P, R]):
     def __init__(
             self,
             task_class: Type[TaskType[P, R]],
-            queue: str | None,
+            channels: tuple[str, ...],
             compress_level: int,
             ) -> None:
 
         self.task_class = task_class
         self.name = _serialize_function(task_class)
         self.db = Database.make(name=self.name, compress_level=compress_level)
-        self.queue = queue if queue is not None else f'<{self.name}>'
+        self.channels = (self.name,) + channels
         self.worker_registry: dict[Json, TaskWorker[R]] = {}
 
         source = inspect.getsource(task_class)
@@ -61,12 +62,12 @@ class TaskConfig(Generic[P, R]):
 class TaskWorker(Generic[R]):
     @classmethod
     def make(cls, config: TaskConfig[P, R], instance: TaskType[P, R], *args: P.args, **kwargs: P.kwargs) -> Self:
-        arg_key = _serialize_arguments(instance.init, *args, **kwargs)
+        arg_key = _serialize_arguments(instance.build_task, *args, **kwargs)
         worker = config.worker_registry.get(arg_key, None)
         if worker is not None:
             return worker
 
-        instance.init(*args, **kwargs)
+        instance.build_task(*args, **kwargs)
         worker = TaskWorker[R](config=config, instance=instance, arg_key=arg_key)
         config.worker_registry[arg_key] = worker
         return worker
@@ -77,8 +78,8 @@ class TaskWorker(Generic[R]):
         self.arg_key = arg_key
 
     @property
-    def queue(self) -> str:
-        return self.config.queue
+    def channels(self) -> tuple[str, ...]:
+        return self.config.channels
 
     @property
     def source_timestamp(self) -> datetime:
@@ -107,7 +108,7 @@ class TaskWorker(Generic[R]):
         db = self.config.db
         if self.directory.exists():
             shutil.rmtree(self.directory)
-        out = self.instance.main()
+        out = self.instance.run_task()
         db.save(self.arg_key, out)
 
     @property
@@ -141,15 +142,26 @@ class TaskType(Generic[P, R], ABC):
     task_config: TaskConfig[P, R]
 
     @abstractmethod
-    def init(self, *args: P.args, **kwargs: P.kwargs) -> None:
+    def build_task(self, *args: P.args, **kwargs: P.kwargs) -> None:
         pass
 
     @abstractmethod
-    def main(self) -> R:
+    def run_task(self) -> R:
         pass
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
-        queue = kwargs.pop('queue', None)
+        _channel = kwargs.pop('channel', None)
+        channels: tuple[str, ...]
+        if isinstance(_channel, str):
+            channels = (_channel,)
+        elif isinstance(_channel, Iterable):
+            channels = tuple(_channel)
+            assert all(isinstance(q, str) for q in channels)
+        elif _channel is None:
+            channels = tuple()
+        else:
+            raise ValueError('Invalid channel value:', _channel)
+
         compress_level = kwargs.pop('compress_level', 0)
 
         # Fill missing requirement
@@ -160,7 +172,7 @@ class TaskType(Generic[P, R], ABC):
                 req.__set_name__(None, k)
                 setattr(cls, k, req)
 
-        cls.task_config = TaskConfig(task_class=cls, queue=queue, compress_level=compress_level)
+        cls.task_config = TaskConfig(task_class=cls, channels=channels, compress_level=compress_level)
         super().__init_subclass__(**kwargs)
 
     def __init__(self, *args: P.args, **kwargs: P.kwargs) -> None:
@@ -175,21 +187,21 @@ class TaskType(Generic[P, R], ABC):
     def clear_task(self) -> None:
         self.task_worker.clear()
 
-    def run_task(
+    def run_graph(
             self, *,
             executor: Executor | None = None,
             max_workers: int | None = None,
             rate_limits: dict[str, int] | None = None,
             detect_source_change: bool | None = None,
             ) -> R:
-        return self.run_task_with_stats(
+        return self.run_graph_with_stats(
                 executor=executor,
                 max_workers=max_workers,
                 rate_limits=rate_limits,
                 detect_source_change=detect_source_change
                 )[0]
 
-    def run_task_with_stats(
+    def run_graph_with_stats(
             self, *,
             executor: Executor | None = None,
             max_workers: int | None = None,
@@ -212,8 +224,8 @@ class TaskType(Generic[P, R], ABC):
 class TaskClassProtocol(Protocol[P, R]):
     task_config: ClassVar[TaskConfig]
     task_worker: TaskWorker
-    def init(self, *args: P.args, **kwargs: P.kwargs) -> None: ...
-    def main(self) -> R: ...
+    def build_task(self, *args: P.args, **kwargs: P.kwargs) -> None: ...
+    def run_task(self) -> R: ...
 
 
 def infer_task_type(cls: Type[TaskClassProtocol[P, R]]) -> Type[TaskType[P, R]]:

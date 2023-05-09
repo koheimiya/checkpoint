@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "checkpoint-tool"
-version = "0.7.1"
+version = "0.7.2"
 description = "A lightweight workflow management tool written in pure Python"
 authors = ["Kohei Miyaguchi <koheimiyaguchi@gmail.com>"]
 license = "MIT License"

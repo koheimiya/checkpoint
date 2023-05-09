@@ -55,11 +55,11 @@ class Choose(Task):
         # The return values of the prerequisite tasks are accessible via the descriptors:
         return self.prev1 + self.prev2
 
-# To run tasks, use the `run_task()` method.
-ans = Choose(6, 3).worker.run_task()  # `ans` should be 6 Choose 3, which is 20.
+# To run the task as well as upstream workflow, use the `run_graph()` method.
+ans = Choose(6, 3).run_graph()  # `ans` should be 6 Choose 3, which is 20.
 
 # It greedily executes all the necessary tasks as parallel as possible
-# and then spits out the return value of the task on which we call `run_task()`.
+# and then spits out the return value of the task on which we call `run_graph()`.
 # The return values of the intermediate tasks are cached at
 # `{$CP_CACHE_DIR:-./.cache}/checkpoint/{module_name}.{task_name}/...`
 # and reused on the fly whenever possible.
@@ -74,7 +74,7 @@ It is possible to selectively discard cache:
 Choose(3, 3).clear_task()
 
 # `ans` is recomputed tracing back to the computation of `Choose(3, 3)`.
-ans = Choose(6, 3).run_task()
+ans = Choose(6, 3).run_graph()
 
 # Delete all the cache associated with `Choose`,
 # equivalent to `rm -r {$CP_CACHE_DIR:-./.cache}/checkpoint/{module_name}.Choose`.
@@ -106,7 +106,7 @@ class T3(Task):
     def main(self):
         ...
 
-result = T3({'param1': { ... }, 'param2': { ... }}).run_task()
+result = T3({'param1': { ... }, 'param2': { ... }}).run_graph()
 ```
 
 Otherwise they can be passed via `Task` and `Req`:
@@ -145,7 +145,7 @@ class ScoreModel(Task):
 dataset_task = LoadDataset()
 model_task = TrainModel(dataset)
 score_task = ScoreModel(dataset, model)
-print(score_task.run_task()
+print(score_task.run_graph()
 ```
 
 `Req` accepts a list/dict of tasks and automatically unfolds it.
@@ -199,27 +199,31 @@ class MyTask(Task):
     ...
 
 # Limit the number of parallel workers
-MyTask().run(executor=ProcessPoolExecutor(max_workers=2))
+MyTask().run_graph(executor=ProcessPoolExecutor(max_workers=2))
 
 # Thread-based parallelism
-MyTask().run(executor=ThreadPoolExecutor())
+MyTask().run_graph(executor=ThreadPoolExecutor())
 ```
 
-One can also control the concurrency at a task/queue level:
+One can also control the concurrency at a task/channel level:
 ```python
-class TaskUsingGPU(Task, queue='gpu'):
+class TaskUsingGPU(Task, channel='<gpu>'):
     ...
 
-class AnotherTaskUsingGPU(Task, queue='gpu'):
+class AnotherTaskUsingGPU(Task, channel=['<gpu>', '<memory>']):
     ...
 
-SomeDownstreamTask().run(rate_limits={'gpu': 1})  # Queue-level concurrency control
-SomeDownstreamTask().run(rate_limits={MemoryIntensiveTask.queue: 1})  # Task-level concurrency control
+# Queue-level concurrency control
+SomeDownstreamTask().run_graph(rate_limits={'<gpu>': 1})
+SomeDownstreamTask().run_graph(rate_limits={'<memory>': 1})
+
+# Task-level concurrency control
+SomeDownstreamTask().run_graph(rate_limits={TaskUsingGPU.task_config.name: 1})
 
 ```
 
 ### Commandline tool
-We can use checkpoint-tool from commandline like `python -m checkpoint path/to/taskfile.py`, where `taskfile.py` defines the `main` task as follows:
+We can use checkpoint-tool from commandline like `python -m checkpoint.app path/to/taskfile.py`, where `taskfile.py` defines the `main` task as follows:
 ```python
 # taskfile.py
 
