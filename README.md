@@ -163,10 +163,11 @@ class SummarizeScores(Task):
         return sum(self.scores.values()) / len(self.scores)  # We have access to the dict of the results.
 ```
 
-The output of the `main` method should be serializable with `cloudpickle`.
-Large outputs can be stored with compression via `zlib`:
+The output of the `run_task` method should be serializable with `cloudpickle`,
+which is then compressed with `gzip`.
+The compression level can be changed as follows (defaults to 9).
 ```python
-class LargeOutputTask(Task, compress_level=-1):
+class LargeOutputTask(Task, compress_level=0):
     ...
 ```
 
@@ -221,7 +222,7 @@ SomeDownstreamTask().run_graph(rate_limits={TaskUsingGPU.task_name: 1})
 ```
 
 ### Commandline tool
-We can use checkpoint-tool from commandline like `python -m checkpoint.app path/to/taskfile.py`, where `taskfile.py` defines the `main` task as follows:
+We can use checkpoint-tool from commandline like `python -m checkpoint.app path/to/taskfile.py`, where `taskfile.py` defines the `Main` task as follows:
 ```python
 # taskfile.py
 

@@ -8,14 +8,10 @@ from datetime import datetime
 from pathlib import Path
 from concurrent.futures import Executor
 import ast
-import os
 import logging
 import inspect
 import json
-import base64
 import shutil
-
-import zlib
 
 from .types import Json, TaskKey, Context
 from .database import Database
@@ -50,10 +46,6 @@ class TaskConfig(Generic[P, R]):
         source = inspect.getsource(task_class)
         formatted_source = ast.unparse(ast.parse(source))
         self.source_timestamp = self.db.update_source_if_necessary(formatted_source)
-
-    @property
-    def data_directory(self) -> Path:
-        return self.db.data_directory
 
     def clear_all(self) -> None:
         self.db.clear()
@@ -112,14 +104,9 @@ class TaskWorker(Generic[R]):
         db.save(self.arg_key, out)
 
     @property
-    def _relative_path(self) -> str:
-        _, arg_str = self.to_tuple()
-        id_ = base64.urlsafe_b64encode(zlib.compress(arg_str.encode(), level=9)).decode().replace('=', '')
-        return os.path.join(*[id_[i:i+255] for i in range(0, len(id_), 255)])
-
-    @property
     def _directory_uninit(self) -> Path:
-        return Path(self.config.data_directory) / self._relative_path
+        _, arg_str = self.to_tuple()
+        return self.config.db.get_data_directory(arg_str)
 
     @property
     def directory(self) -> Path:
@@ -165,7 +152,7 @@ class TaskType(Generic[P, R], ABC):
         else:
             raise ValueError('Invalid channel value:', _channel)
 
-        compress_level = kwargs.pop('compress_level', 0)
+        compress_level = kwargs.pop('compress_level', 9)
 
         # Fill missing requirement
         ann = inspect.get_annotations(cls, eval_str=True)

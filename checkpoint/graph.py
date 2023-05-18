@@ -131,7 +131,7 @@ def run_task_graph(
     """ Consume task graph concurrently.
     """
     stats = {k: len(args) for k, args in graph.get_nodes_by_task().items()}
-    LOGGER.info(f'Following tasks will be called: {stats}')
+    LOGGER.debug(f'Following tasks will be called: {stats}')
     info = {'stats': stats, 'generations': []}
 
     # Read concurrency budgets
@@ -145,7 +145,7 @@ def run_task_graph(
     with executor as executor:
         while standby or in_process:
             # Log some stats
-            LOGGER.info(
+            LOGGER.debug(
                     f'nodes: {graph.size}, '
                     f'standby: {len(standby)}, '
                     f'in_process: {len(in_process)}'

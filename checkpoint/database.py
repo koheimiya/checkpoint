@@ -1,45 +1,44 @@
 from __future__ import annotations
 from typing import Callable, Generic, TypeVar, Any
-from typing_extensions import ParamSpec, Self
+from typing_extensions import Self
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 import shutil
+import gzip
 
 import cloudpickle
-import zlib
 import diskcache as dc
 
 from .types import Context
 from .types import Json
 
 
-K = TypeVar('K')
 T = TypeVar('T')
-S = TypeVar('S')
-U = TypeVar('U')
-P = ParamSpec('P')
-Q = ParamSpec('Q')
-R = TypeVar('R', covariant=True)
 
 
 Serializer = tuple[Callable[[Any], bytes], Callable[[bytes], Any]]
 DEFAULT_SERIALIZER: Serializer = (cloudpickle.dumps, cloudpickle.loads)
-
-
 @dataclass(frozen=True)
 class Database(Generic[T]):
     """ Manage the cache of tasks.
     Layout:
-    Context.cache_dir / 'checkpoint' / name / result     # return values
-    Context.cache_dir / 'checkpoint' / name / timestamp  # timestamps
-    Context.cache_dir / 'checkpoint' / name / data       # other data created by tasks
+    Context.cache_dir / 'checkpoint' / name /
+        * source.txt
+        * id_table
+        * results /
+            * 0.pkl.gz
+            * 1.pkl.gz
+            ...
+        * data /
+            * 0 /
+            * 1 /
+            ...
     """
     name: str
     base_path: Path
     compress_level: int
-    result_cache: dc.Cache
-    timestamp_cache: dc.Cache
+    id_table: IdTable
     serializer: Serializer = DEFAULT_SERIALIZER
 
     @classmethod
@@ -49,21 +48,32 @@ class Database(Generic[T]):
                 name=name,
                 base_path=base_path,
                 compress_level=compress_level,
-                result_cache=dc.Cache(base_path / 'result'),
-                timestamp_cache=dc.Cache(base_path / 'timestamp'),
+                id_table=IdTable(base_path / 'id_table')
                 )
 
     def __post_init__(self) -> None:
         self.data_directory.mkdir(exist_ok=True)
-        self.source_path.parent.mkdir(exist_ok=True)
+        self.result_directory.mkdir(exist_ok=True)
+
+    @property
+    def result_directory(self) -> Path:
+        return Path(self.base_path) / 'results'
+
+    def get_result_path(self, key: Json) -> Path:
+        taskid = self.id_table.get(key)
+        return self.result_directory / f'{taskid}.pkl.gz'
 
     @property
     def data_directory(self) -> Path:
         return Path(self.base_path) / 'data'
 
+    def get_data_directory(self, key: Json) -> Path:
+        taskid = self.id_table.get(key)
+        return self.data_directory / f'{taskid}'
+
     @property
     def source_path(self) -> Path:
-        return Path(self.base_path) / 'code' / 'source.txt'
+        return Path(self.base_path) / 'source.txt'
 
     def update_source_if_necessary(self, source: str) -> datetime:
         # Update source cache
@@ -76,57 +86,72 @@ class Database(Generic[T]):
         return self.load_source_timestamp()
 
     def load_source_timestamp(self) -> datetime:
-        timestamp = self.source_path.stat().st_mtime_ns / 10 ** 9
-        return datetime.fromtimestamp(timestamp)
-
-    def _dumps(self, obj: Any) -> bytes:
-        dumps, _ = self.serializer
-        return zlib.compress(dumps(obj), level=self.compress_level)
-
-    def _loads(self, data: bytes) -> Any:
-        _, loads = self.serializer
-        return loads(zlib.decompress(data))
+        return _get_timestamp(self.source_path)
 
     def save(self, key: Json, obj: T) -> datetime:
-        data = self._dumps(obj)
-        with self.result_cache as ref:
-            ref[key] = data
-
-        timestamp = datetime.now()
-        with self.timestamp_cache as ref:
-            ref[key] = timestamp.timestamp()
-        return timestamp
+        path = self.get_result_path(key)
+        with gzip.open(path, 'wb', compresslevel=self.compress_level) as ref:
+            cloudpickle.dump(obj, ref)
+        return _get_timestamp(path)
 
     def load(self, key: Json) -> T:
-        with self.result_cache as ref:
-            data = ref[key]
-        return self._loads(data)
+        path = self.get_result_path(key)
+        with gzip.open(path, 'rb') as ref:
+            return cloudpickle.load(ref)
 
     def load_timestamp(self, key: Json) -> datetime:
-        with self.timestamp_cache as ref:
-            ts = ref[key]
-        return datetime.fromtimestamp(ts)
+        path = self.get_result_path(key)
+        if path.exists():
+            return _get_timestamp(path)
+        else:
+            raise KeyError(key)
 
-    def __contains__(self, key: T) -> bool:
-        with self.result_cache as ref:
+    def clear(self) -> None:
+        self.id_table.clear()
+        if self.data_directory.exists():
+            shutil.rmtree(self.data_directory)
+        if self.result_directory.exists():
+            shutil.rmtree(self.result_directory)
+        self.data_directory.mkdir()
+        self.result_directory.mkdir()
+
+    def delete(self, key: Json) -> None:
+        resdir = self.get_result_path(key)
+        if resdir.exists():
+            resdir.unlink()
+        else:
+            raise KeyError(key)
+        datadir = self.get_data_directory(key)
+        if datadir.exists():
+            shutil.rmtree(datadir)
+
+
+def _get_timestamp(path: Path) -> datetime:
+    timestamp = path.stat().st_mtime_ns / 10 ** 9
+    return datetime.fromtimestamp(timestamp)
+
+
+@dataclass
+class IdTable:
+    def __init__(self, path: Path | str) -> None:
+        self.table = dc.Cache(directory=path)
+    
+    def get(self, x: Any) -> int:
+        with self.table as ref:
+            try:
+                return ref[x]
+            except KeyError:
+                n = len(ref)
+                ref[x] = n
+                return n
+
+    def __contains__(self, key: Any) -> bool:
+        with self.table as ref:
             return key in ref
 
     def list_keys(self) -> list[str]:
-        with self.result_cache as ref:
+        with self.table as ref:
             return list(map(str, ref))
 
-    def _get_caches(self) -> list[dc.Cache]:
-        return [self.result_cache, self.timestamp_cache]
-
     def clear(self) -> None:
-        for cache in self._get_caches():
-            cache.clear()
-        if self.data_directory.exists():
-            shutil.rmtree(self.data_directory)
-        self.data_directory.mkdir()
-
-    def delete(self, key: Json) -> None:
-        for cache in self._get_caches():
-            with cache as ref:
-                del ref[key]
-
+        self.table.clear()

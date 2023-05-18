@@ -137,19 +137,16 @@ def test_requires_directory():
     GreetWithFile.clear_all_tasks()
     taskdir_world = CreateFile('Hello, world!')._task_worker._directory_uninit
     taskdir_me = CreateFile('Hello, me!')._task_worker._directory_uninit
-    task_factory_dir = CreateFile._task_config.data_directory
 
     def check_output(name: str):
         assert GreetWithFile(name).run_graph() == f'Hello, {name}!'
 
     assert not taskdir_world.exists()
     assert not taskdir_me.exists()
-    assert not any(task_factory_dir.iterdir())
     check_output('world')
     check_output('me')
     assert taskdir_world.exists()
     assert taskdir_me.exists()
-    assert any(task_factory_dir.iterdir())
 
     # Directories persist
     GreetWithFile.clear_all_tasks()
@@ -159,14 +156,12 @@ def test_requires_directory():
     CreateFile('Hello, world!').clear_task()
     assert not taskdir_world.exists()       # task directory deleted
     assert taskdir_me.exists()              # other task directories are not deleted
-    assert any(task_factory_dir.iterdir())  # whole task directory is not deleted
     check_output('world')                   # file recreated
 
     # Task directory can be deleted at all
     CreateFile.clear_all_tasks()
     assert not taskdir_world.exists()           # task directory deleted
     assert not taskdir_me.exists()              # other task directories are also deleted
-    assert not any(task_factory_dir.iterdir())  # whole task directory is deleted
     check_output('world')                       # file recreated
 
 

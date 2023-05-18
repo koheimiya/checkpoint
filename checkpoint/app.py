@@ -4,11 +4,16 @@ from pathlib import Path
 import sys
 import json
 import pprint
+import logging
+import io
 
 import click
 
 from .types import Context
 from .task import TaskType
+
+
+LOGGER = logging.getLogger(__name__)
 
 
 @click.command
@@ -20,6 +25,7 @@ from .task import TaskType
 @click.option('--rate-limits', type=json.loads, default=None, help='JSON dictionary for rate_limits.')
 @click.option('-D', '--detect-source-change', is_flag=True, help='Automatically discard the cache per task once the source code (AST) is changed.')
 @click.option('--dont-force-entrypoint', is_flag=True, help='Do nothing if the cache of the entripoint task is up-to-date.')
+@click.option('-l', '--loglevel', type=click.Choice(['debug', 'info', 'warning', 'error']), default='warning')
 def main(taskfile: Path,
          entrypoint: str,
          exec_type: str,
@@ -27,13 +33,11 @@ def main(taskfile: Path,
          cache_dir: Path | None,
          rate_limits: dict[str, Any] | None,
          detect_source_change: bool,
-         dont_force_entrypoint: bool
+         dont_force_entrypoint: bool,
+         loglevel: str,
          ) -> int:
-    # Set arguments as environment variables
-    # os.environ['CP_EXECUTOR'] = exec_type
-    # os.environ['CP_MAX_WORKERS'] = str(max_workers)
-    # os.environ['CP_CACHE_DIR'] = str(taskfile.parent / '.cache') if cache_dir is None else str(cache_dir)
-    # os.environ['CP_DETECT_SOURCE_CHANGE'] = str(int(detect_source_change))
+    logging.basicConfig(level=getattr(logging, loglevel.upper()))
+
     Context.executor_name = exec_type
     Context.max_workers = max_workers
     Context.cache_dir = taskfile.parent / '.cache' if cache_dir is None else cache_dir
@@ -43,13 +47,6 @@ def main(taskfile: Path,
     module_name = taskfile.with_suffix('').name
     sys.path.append(str(taskfile.parent))
     module = __import__(module_name)
-    # import importlib.util
-    # spec = importlib.util.spec_from_file_location(module_name, taskfile)
-    # assert spec is not None
-    # assert spec.loader is not None
-    # module = importlib.util.module_from_spec(spec)
-    # sys.modules[module_name] = module
-    # spec.loader.exec_module(module)
 
     # Run the main task
     entrypoint_fn = getattr(module, entrypoint)
@@ -60,8 +57,11 @@ def main(taskfile: Path,
         entrypoint_task.clear_task()
     _, stats = entrypoint_task.run_graph_with_stats(rate_limits=rate_limits)
 
-    print('Execution summary:')
-    pprint.pprint(stats['stats'], sort_dicts=False)
+    LOGGER.info('Execution summary:')
+    buf = io.StringIO()
+    pprint.pprint(stats['stats'], sort_dicts=False, stream=buf)
+    for line in buf.getvalue().splitlines():
+        LOGGER.info(line)
     return 0
 
 
