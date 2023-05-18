@@ -220,7 +220,7 @@ class TaskType(Generic[P, R], ABC):
         stats = run_task_graph(graph=graph, executor=executor, rate_limits=rate_limits, dump_graphs=dump_generations)
         return self._task_worker.get_result(), stats
 
-    def get_taskitem(self: TaskType[..., Mapping[K, T]], key: K) -> _MappedTask[K, T]:
+    def __getitem__(self: TaskType[..., Mapping[K, T]], key: K) -> _MappedTask[K, T]:
         return _MappedTask(self, key)
 
 

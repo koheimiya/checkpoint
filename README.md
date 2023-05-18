@@ -163,7 +163,7 @@ class SummarizeScores(Task):
         return sum(self.scores.values()) / len(self.scores)  # We have access to the dict of the results.
 ```
 
-One can also directly access the items of dictionary-valued upstream tasks with `get_taskitem`.
+One can also directly access the items of dictionary-valued upstream tasks.
 ```python
 class MultiOutputTask(Task):
     ...
@@ -175,7 +175,7 @@ class DownstreamTask(Task):
     dep: Requires[int]
 
     def build_task(self):
-        self.dep = MultiOutputTask().get_taskitem('foo')
+        self.dep = MultiOutputTask()['foo']
 ```
 
 The output of the `run_task` method should be serializable with `cloudpickle`,

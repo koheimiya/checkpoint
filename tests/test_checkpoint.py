@@ -1,4 +1,3 @@
-from math import inf
 from typing import Any
 import pytest
 from checkpoint import infer_task_type, Task, Req, Requires, Const, RequiresDict
@@ -208,7 +207,7 @@ class DownstreamTask(Task):
     up: Requires[str]
 
     def build_task(self) -> None:
-        self.up = MultiResultTask().get_taskitem('hello')
+        self.up = MultiResultTask()['hello']
 
     def run_task(self) -> str:
         return self.up

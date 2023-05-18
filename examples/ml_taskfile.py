@@ -101,13 +101,13 @@ class Main(Task):
         for i in range(10):
             dataset = PreprocessData('mydata', split_ratio=.8, seed=i)
             trained = TrainModel(
-                    train=dataset.get_taskitem('train'),
-                    valid=dataset.get_taskitem('valid'),
+                    train=dataset['train'],
+                    valid=dataset['valid'],
                     train_config={'lr': .01},
                     seed=i
                     )
             result = TestModel(
-                    test=dataset.get_taskitem('test'),
+                    test=dataset['test'],
                     trained_model=trained
                     )
             tasks.append(result)
