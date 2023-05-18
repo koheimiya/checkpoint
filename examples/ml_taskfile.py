@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import Any, Generic, NewType, Protocol, TypeVar
 
 from cloudpickle import dump, load
-from checkpoint import infer_task_type, Task, Requires, RequiresList
+from checkpoint import infer_task_type, Task, TaskLike, Requires, RequiresList
 
 
 # For demonstration
@@ -59,31 +59,33 @@ class PreprocessData(Task):
 
 @infer_task_type
 class TrainModel(Task):
-    data_dict: Requires[dict[str, Loader[Data]]]
+    train_data: Requires[Loader[Data]]
+    valid_data: Requires[Loader[Data]]
     
-    def build_task(self, preprocessed_data: Task[dict[str, Loader[Data]]], train_config: dict, seed: int):
-        self.data_dict = preprocessed_data
+    def build_task(self, train: TaskLike[Loader[Data]], valid: TaskLike[Loader[Data]], train_config: dict, seed: int):
+        self.train_data = train
+        self.valid_data = valid
         self.train_config = train_config
         self.seed = seed
     
     def run_task(self) -> Loader[Model]:
-        train_data = self.data_dict['train'].load()
-        valid_data = self.data_dict['valid'].load()
+        train_data = self.train_data.load()
+        valid_data = self.valid_data.load()
         # Train model with data and save it to trained_path ...
         return PickleLoader(Model('<trained model>'), self.task_directory / 'trained.bin')
 
 
 @infer_task_type
 class TestModel(Task):
-    data_dict: Requires[dict[str, Loader[Data]]]
+    test_data: Requires[Loader[Data]]
     model: Requires[Loader[Model]]
 
-    def build_task(self, preprocessed_data: Task[dict[str, Loader[Data]]], trained_model: Task[Loader[Model]]):
-        self.data_dict = preprocessed_data
+    def build_task(self, test: TaskLike[Loader[Data]], trained_model: Task[Loader[Model]]):
+        self.test_data = test
         self.model = trained_model
     
     def run_task(self) -> dict[str, Any]:
-        test_data = self.data_dict['test'].load()
+        test_data = self.test_data.load()
         model = self.model.load()
         # Evaluate model on test_data ...
         result = {'score': ...}
@@ -97,9 +99,17 @@ class Main(Task):
     def build_task(self):
         tasks: list[Task[dict]] = []
         for i in range(10):
-            data = PreprocessData('mydata', split_ratio=.8, seed=i)
-            trained = TrainModel(preprocessed_data=data, train_config={'lr': .01}, seed=i)
-            result = TestModel(preprocessed_data=data, trained_model=trained)
+            dataset = PreprocessData('mydata', split_ratio=.8, seed=i)
+            trained = TrainModel(
+                    train=dataset.get_taskitem('train'),
+                    valid=dataset.get_taskitem('valid'),
+                    train_config={'lr': .01},
+                    seed=i
+                    )
+            result = TestModel(
+                    test=dataset.get_taskitem('test'),
+                    trained_model=trained
+                    )
             tasks.append(result)
         self.results = tasks
 

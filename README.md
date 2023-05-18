@@ -81,7 +81,7 @@ ans = Choose(6, 3).run_graph()
 Choose.clear_all_tasks()            
 ```
 
-### Limitations of Task I/O
+### Task IO
 
 The arguments of the `init` method can be anything JSON serializable:
 ```python
@@ -163,11 +163,26 @@ class SummarizeScores(Task):
         return sum(self.scores.values()) / len(self.scores)  # We have access to the dict of the results.
 ```
 
+One can also directly access the items of dictionary-valued upstream tasks with `get_taskitem`.
+```python
+class MultiOutputTask(Task):
+    ...
+
+    def run_task(self) -> dict[str, int]:
+        return {'foo': 42, ...}
+
+class DownstreamTask(Task):
+    dep: Requires[int]
+
+    def build_task(self):
+        self.dep = MultiOutputTask().get_taskitem('foo')
+```
+
 The output of the `run_task` method should be serializable with `cloudpickle`,
 which is then compressed with `gzip`.
 The compression level can be changed as follows (defaults to 9).
 ```python
-class LargeOutputTask(Task, compress_level=0):
+class NoCompressionTask(Task, compress_level=0):
     ...
 ```
 
@@ -175,7 +190,7 @@ class LargeOutputTask(Task, compress_level=0):
 
 Use `task.task_directory` to get a fresh path dedicated to each task.
 The directory is automatically created at
-`{$CP_CACHE_DIR:-./.cache}/checkpoint/{module_name}.{task_name}/data/{cryptic_task_id}`
+`{$CP_CACHE_DIR:-./.cache}/checkpoint/{module_name}.{task_name}/data/{task_id}`
 and the contents of the directory are cleared at each task call and persist until the task is cleared.
 ```python
 class TrainModel(Task):

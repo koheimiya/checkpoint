@@ -200,15 +200,15 @@ class MultiResultTask(Task):
     def build_task(self) -> None:
         pass
 
-    def run_task(self) -> tuple[str, str]:
-        return 'hello', 'world'
+    def run_task(self) -> dict[str, str]:
+        return {'hello': 'world'}
 
 @infer_task_type
 class DownstreamTask(Task):
     up: Requires[str]
 
     def build_task(self) -> None:
-        self.up = MultiResultTask().map_task(lambda ss: ss[0])
+        self.up = MultiResultTask().get_taskitem('hello')
 
     def run_task(self) -> str:
         return self.up
@@ -216,4 +216,4 @@ class DownstreamTask(Task):
 def test_mapping():
     MultiResultTask.clear_all_tasks()
     DownstreamTask.clear_all_tasks()
-    assert DownstreamTask().run_graph() == 'hello'
+    assert DownstreamTask().run_graph() == 'world'

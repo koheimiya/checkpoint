@@ -23,6 +23,7 @@ LOGGER = logging.getLogger(__name__)
 
 K = TypeVar('K')
 T = TypeVar('T')
+S = TypeVar('S')
 U = TypeVar('U')
 P = ParamSpec('P')
 R = TypeVar('R', covariant=True)
@@ -219,8 +220,8 @@ class TaskType(Generic[P, R], ABC):
         stats = run_task_graph(graph=graph, executor=executor, rate_limits=rate_limits, dump_graphs=dump_generations)
         return self._task_worker.get_result(), stats
 
-    def map_task(self, func: Callable[[R], T]) -> MappedTask[T]:
-        return MappedTask(self, func)
+    def get_taskitem(self: TaskType[..., Mapping[K, T]], key: K) -> _MappedTask[K, T]:
+        return _MappedTask(self, key)
 
 
 class TaskClassProtocol(Protocol[P, R]):
@@ -252,26 +253,32 @@ class CustomJSONEncoder(json.JSONEncoder):
     def default(self, o):
         if isinstance(o, TaskType):
             return {'__task__': o._task_worker.to_tuple()}
+        elif isinstance(o, _MappedTask):
+            return {'__task__': o.get_origin()._task_worker.to_tuple(), '__key__': o.get_args()}
         else:
             # Let the base class default method raise the TypeError
             return super().default(o)
 
 
 @dataclass
-class MappedTask(Generic[R]):
-    task: TaskLike[Any]
-    mapping: Callable[..., R]
+class _MappedTask(Generic[K, T]):
+    task: TaskType[..., Mapping[K, T]] | _MappedTask[Any, Mapping[K, T]]
+    key: K
 
-    @classmethod
-    def make(cls, task: TaskLike[T], mapping: Callable[[T], R]) -> Self:
-        return MappedTask(task, mapping)
-
-    def get_origin(self) -> TaskType[..., Any] | Const[Any]:
+    def get_origin(self) -> TaskType[..., Any]:
         x = self.task
-        if isinstance(x, MappedTask):
+        if isinstance(x, _MappedTask):
             return x.get_origin()
         else:
             return x
+
+    def get_args(self) -> list[Any]:
+        out = []
+        x = self
+        while isinstance(x, _MappedTask):
+            out.append(x.key)
+            x = x.task
+        return out[::-1]
 
 
 class Req(Generic[T, R]):
@@ -290,11 +297,11 @@ class Req(Generic[T, R]):
     def __get__(self: Req[dict[K, TaskLike[U]], dict[K, U]], obj: TaskType[..., Any], _=None) -> dict[K, U]: ...
     def __get__(self, obj: TaskType[..., Any], _=None) -> Any:
 
-        def get_result(task_like: TaskLike[R]) -> R:
+        def get_result(task_like: TaskLike[S]) -> S:
             if isinstance(task_like, TaskType):
                 return task_like._task_worker.get_result()
-            elif isinstance(task_like, MappedTask):
-                return task_like.mapping(get_result(task_like.task))
+            elif isinstance(task_like, _MappedTask):
+                return get_result(task_like.task)[task_like.key]
             elif isinstance(task_like, Const):
                 return task_like.value
             else:
@@ -312,7 +319,7 @@ class Req(Generic[T, R]):
         x = getattr(obj, self.private_name, None)
         assert x is not None, f'Requirement `{self.public_name}` is not set in {obj}.'
 
-        if isinstance(x, MappedTask):
+        if isinstance(x, _MappedTask):
             x = x.get_origin()
 
         if isinstance(x, TaskType):
@@ -336,7 +343,7 @@ class Const(Generic[R]):
 
 
 Task = TaskType[..., R]
-TaskLike = Task[R] | Const[R] | MappedTask[R]
+TaskLike = Task[R] | Const[R] | _MappedTask[Any, R]
 
 
 Requires = Req[TaskLike[R], R]
