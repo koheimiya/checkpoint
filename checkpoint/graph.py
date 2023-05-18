@@ -1,7 +1,8 @@
 """ DAG processor """
 from __future__ import annotations
 from datetime import datetime
-from typing import Any, Protocol, Self, Sequence, runtime_checkable
+from typing import Any, Sequence
+from typing_extensions import Self, runtime_checkable, Protocol
 from collections import defaultdict
 from dataclasses import dataclass
 from concurrent.futures import Future, wait, FIRST_COMPLETED, Executor

@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "checkpoint-tool"
-version = "0.7.5"
+version = "0.7.6"
 description = "A lightweight workflow management tool written in pure Python"
 authors = ["Kohei Miyaguchi <koheimiyaguchi@gmail.com>"]
 license = "MIT License"
@@ -10,7 +10,7 @@ readme = "README.md"
 packages = [{include = "checkpoint"}]
 
 [tool.poetry.dependencies]
-python = "^3.9"
+python = "^3.10"
 typing-extensions = "^4.5.0"
 diskcache = "^5.6.1"
 cloudpickle = "^2.2.1"
