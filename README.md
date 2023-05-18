@@ -234,7 +234,8 @@ Please refer to `python -m checkpoint.app --help` for more info.
 
 
 ## TODO
- - [ ] Loader-based serialization
- - [ ] Simple visualizers
+- [ ] Shrink the role of DBCache to task directory manager
+- [ ] Task as functor
+- [ ] Simple visualizers
     - [ ] Task-wise progressbar
     - [ ] Graph visualizer
