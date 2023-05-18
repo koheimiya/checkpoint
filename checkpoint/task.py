@@ -219,6 +219,9 @@ class TaskType(Generic[P, R], ABC):
         stats = run_task_graph(graph=graph, executor=executor, rate_limits=rate_limits, dump_graphs=dump_generations)
         return self._task_worker.get_result(), stats
 
+    def map_task(self, func: Callable[[R], T]) -> MappedTask[T]:
+        return MappedTask(self, func)
+
 
 class TaskClassProtocol(Protocol[P, R]):
     def build_task(self, *args: P.args, **kwargs: P.kwargs) -> None: ...
@@ -254,6 +257,23 @@ class CustomJSONEncoder(json.JSONEncoder):
             return super().default(o)
 
 
+@dataclass
+class MappedTask(Generic[R]):
+    task: TaskLike[Any]
+    mapping: Callable[..., R]
+
+    @classmethod
+    def make(cls, task: TaskLike[T], mapping: Callable[[T], R]) -> Self:
+        return MappedTask(task, mapping)
+
+    def get_origin(self) -> TaskType[..., Any] | Const[Any]:
+        x = self.task
+        if isinstance(x, MappedTask):
+            return x.get_origin()
+        else:
+            return x
+
+
 class Req(Generic[T, R]):
     def __set_name__(self, _: Any, name: str) -> None:
         self.public_name = name
@@ -269,26 +289,32 @@ class Req(Generic[T, R]):
     @overload
     def __get__(self: Req[dict[K, TaskLike[U]], dict[K, U]], obj: TaskType[..., Any], _=None) -> dict[K, U]: ...
     def __get__(self, obj: TaskType[..., Any], _=None) -> Any:
+
+        def get_result(task_like: TaskLike[R]) -> R:
+            if isinstance(task_like, TaskType):
+                return task_like._task_worker.get_result()
+            elif isinstance(task_like, MappedTask):
+                return task_like.mapping(get_result(task_like.task))
+            elif isinstance(task_like, Const):
+                return task_like.value
+            else:
+                raise TypeError(f'Unsupported requirement type: {type(task_like)}')
+
         x = getattr(obj, self.private_name)
-
-        def get_worker(task: Task[Any]) -> TaskWorker[Any]:
-            assert isinstance(task, TaskType)
-            return task._task_worker
-
-        if isinstance(x, TaskType):
-            return get_worker(x).get_result()
-        elif isinstance(x, list):
-            return [get_worker(t).get_result() for t in x]
+        if isinstance(x, list):
+            return [get_result(t) for t in x]
         elif isinstance(x, dict):
-            return {k: get_worker(v).get_result() for k, v in x.items()}
-        elif isinstance(x, Const):
-            return x.value
+            return {k: get_result(v) for k, v in x.items()}
         else:
-            raise TypeError(f'Unsupported requirement type: {type(x)}')
+            return get_result(x)
 
     def get_task_list(self, obj: TaskType[..., Any]) -> list[TaskType[..., Any]]:
         x = getattr(obj, self.private_name, None)
         assert x is not None, f'Requirement `{self.public_name}` is not set in {obj}.'
+
+        if isinstance(x, MappedTask):
+            x = x.get_origin()
+
         if isinstance(x, TaskType):
             return [x]
         elif isinstance(x, list):
@@ -310,7 +336,7 @@ class Const(Generic[R]):
 
 
 Task = TaskType[..., R]
-TaskLike = Task[R] | Const[R]
+TaskLike = Task[R] | Const[R] | MappedTask[R]
 
 
 Requires = Req[TaskLike[R], R]
