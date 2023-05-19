@@ -1,7 +1,6 @@
 from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Iterable
-from re import sub
 from typing import Callable, Generic, Mapping, Protocol, Sequence, Type, TypeVar, Any, cast
 from typing_extensions import ParamSpec, Self, get_origin, overload
 from dataclasses import dataclass
@@ -108,7 +107,7 @@ class TaskWorker(Generic[R]):
         out = self.run_instance_task()
         db.save(self.arg_key, out)
 
-    def run_instance_task(self) -> R:
+    def run_instance_task(self) -> Any:
         job_prefix = self.config.job_prefix
         if job_prefix is None:
             return self.instance.run_task()
@@ -128,7 +127,10 @@ class TaskWorker(Generic[R]):
                 """.replace('\n', ';')
                 with gzip.open(worker_path, 'wb') as worker_ref:
                     cloudpickle.dump(self, worker_ref)
-                res = subprocess.run([*job_prefix, sys.executable, '-c', pycmd], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                res = subprocess.run(
+                        [*job_prefix, sys.executable, '-c', pycmd],
+                        capture_output=True,
+                        )
                 print(res.stdout.decode(), end='')
                 print(res.stderr.decode(), end='', file=sys.stderr)
                 res.check_returncode()
@@ -138,7 +140,7 @@ class TaskWorker(Generic[R]):
     @property
     def _directory_uninit(self) -> Path:
         _, arg_str = self.to_tuple()
-        return self.config.db.get_data_directory(arg_str)
+        return self.config.db.get_data_dir(arg_str)
 
     @property
     def directory(self) -> Path:
@@ -252,6 +254,9 @@ class TaskType(Generic[P, R], ABC):
         stats = run_task_graph(graph=graph, executor=executor, rate_limits=rate_limits, dump_graphs=dump_generations)
         return self._task_worker.get_result(), stats
 
+    def get_task_result(self) -> R:
+        return self._task_worker.get_result()
+
     def __getitem__(self: TaskType[..., Mapping[K, T]], key: K) -> _MappedTask[K, T]:
         return _MappedTask(self, key)
 
@@ -284,9 +289,12 @@ def _serialize_arguments(fn: Callable[P, Any], *args: P.args, **kwargs: P.kwargs
 class CustomJSONEncoder(json.JSONEncoder):
     def default(self, o):
         if isinstance(o, TaskType):
-            return {'__task__': o._task_worker.to_tuple()}
+            name, keys = o._task_worker.to_tuple()
+            return {'__task__': name, '__args__': json.loads(keys)}
         elif isinstance(o, _MappedTask):
-            return {'__task__': o.get_origin()._task_worker.to_tuple(), '__key__': o.get_args()}
+            out = self.default(o.get_origin())
+            out['__key__'] = o.get_args()
+            return out
         else:
             # Let the base class default method raise the TypeError
             return super().default(o)
@@ -312,6 +320,12 @@ class _MappedTask(Generic[K, T]):
             x = x.task
         return out[::-1]
 
+    def get_task_result(self) -> T:
+        out = self.get_origin().get_task_result()
+        for k in self.get_args():
+            out = out[k]
+        return out
+
 
 class Req(Generic[T, R]):
     def __set_name__(self, _: Any, name: str) -> None:
@@ -330,12 +344,8 @@ class Req(Generic[T, R]):
     def __get__(self, obj: TaskType[..., Any], _=None) -> Any:
 
         def get_result(task_like: TaskLike[S]) -> S:
-            if isinstance(task_like, TaskType):
-                return task_like._task_worker.get_result()
-            elif isinstance(task_like, _MappedTask):
-                return get_result(task_like.task)[task_like.key]
-            elif isinstance(task_like, Const):
-                return task_like.value
+            if isinstance(task_like, (TaskType, _MappedTask, Const)):
+                return task_like.get_task_result()
             else:
                 raise TypeError(f'Unsupported requirement type: {type(task_like)}')
 
@@ -370,12 +380,12 @@ class Req(Generic[T, R]):
 class Const(Generic[R]):
     value: R
 
-    def get_result(self) -> R:
+    def get_task_result(self) -> R:
         return self.value
 
 
-Task = TaskType[..., R]
-TaskLike = Task[R] | Const[R] | _MappedTask[Any, R]
+Task = TaskType[..., R] | _MappedTask[Any, R]
+TaskLike = Task[R] | Const[R]
 
 
 Requires = Req[TaskLike[R], R]
@@ -383,11 +393,8 @@ RequiresList = Req[Sequence[TaskLike[R]], list[R]]
 RequiresDict = Req[Mapping[K, TaskLike[R]], dict[K, R]]
 
 
-class SourceTask(TaskType[[], R]):
+class TaskBase(TaskType):
     def build_task(self) -> None:
         pass
-
-
-class SinkTask(TaskType[P, None]):
     def run_task(self) -> None:
         pass

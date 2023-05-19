@@ -23,16 +23,18 @@ DEFAULT_SERIALIZER: Serializer = (cloudpickle.dumps, cloudpickle.loads)
 class Database(Generic[T]):
     """ Manage the cache of tasks.
     Layout:
-    Context.cache_dir / 'checkpoint' / name /
+    Context.cache_dir/'checkpoint'/name/
         * source.txt
         * id_table
-        * results /
-            * 0.pkl.gz
-            * 1.pkl.gz
-            ...
-        * data /
-            * 0 /
-            * 1 /
+        * results/
+            * 0/
+                * args.json
+                * result.pkl.gz
+                * data/
+            * 1/
+                * args.json
+                * result.pkl.gz
+                * data/
             ...
     """
     name: str
@@ -52,24 +54,26 @@ class Database(Generic[T]):
                 )
 
     def __post_init__(self) -> None:
-        self.data_directory.mkdir(exist_ok=True)
-        self.result_directory.mkdir(exist_ok=True)
+        self.results_directory.mkdir(exist_ok=True)
 
     @property
-    def result_directory(self) -> Path:
+    def results_directory(self) -> Path:
         return Path(self.base_path) / 'results'
 
+    def get_result_dir(self, key: Json) -> Path:
+        taskid = self.id_table.get(key)
+        out = self.results_directory / f'{taskid}'
+        if not out.exists():
+            out.mkdir()
+            with open(out / 'args.json', 'w') as ref:
+                ref.write(key)
+        return out
+
     def get_result_path(self, key: Json) -> Path:
-        taskid = self.id_table.get(key)
-        return self.result_directory / f'{taskid}.pkl.gz'
+        return self.get_result_dir(key) / f'result.pkl.gz'
 
-    @property
-    def data_directory(self) -> Path:
-        return Path(self.base_path) / 'data'
-
-    def get_data_directory(self, key: Json) -> Path:
-        taskid = self.id_table.get(key)
-        return self.data_directory / f'{taskid}'
+    def get_data_dir(self, key: Json) -> Path:
+        return self.get_result_dir(key) / 'data'
 
     @property
     def source_path(self) -> Path:
@@ -108,12 +112,9 @@ class Database(Generic[T]):
 
     def clear(self) -> None:
         self.id_table.clear()
-        if self.data_directory.exists():
-            shutil.rmtree(self.data_directory)
-        if self.result_directory.exists():
-            shutil.rmtree(self.result_directory)
-        self.data_directory.mkdir()
-        self.result_directory.mkdir()
+        if self.results_directory.exists():
+            shutil.rmtree(self.results_directory)
+        self.results_directory.mkdir()
 
     def delete(self, key: Json) -> None:
         resdir = self.get_result_path(key)
@@ -121,7 +122,7 @@ class Database(Generic[T]):
             resdir.unlink()
         else:
             raise KeyError(key)
-        datadir = self.get_data_directory(key)
+        datadir = self.get_data_dir(key)
         if datadir.exists():
             shutil.rmtree(datadir)
 

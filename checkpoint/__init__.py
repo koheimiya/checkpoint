@@ -9,12 +9,12 @@ Limitations:
     - No priority-based scheduling.
 """
 from .types import Context
-from .task import infer_task_type, Task, SinkTask, SourceTask, TaskLike, Req, Requires, RequiresList, RequiresDict, Const
+from .task import infer_task_type, Task, TaskBase, Req, Requires, RequiresList, RequiresDict, Const
 
 
 __EXPORT__ = [
-        infer_task_type, Task, SinkTask, SourceTask,
-        Const, TaskLike,
+        infer_task_type, Task,
+        Const, TaskBase,
         Req, Requires, RequiresList, RequiresDict,
         Context
         ]

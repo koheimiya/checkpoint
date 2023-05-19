@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import Any, Generic, NewType, Protocol, TypeVar
 
 from cloudpickle import dump, load
-from checkpoint import infer_task_type, Task, SinkTask, TaskLike, Requires, RequiresList
+from checkpoint import infer_task_type, TaskBase, Task, Requires, RequiresList
 
 
 # For demonstration
@@ -28,7 +28,7 @@ class PickleLoader(Generic[T_co]):
 
 
 @infer_task_type
-class LoadData(Task):
+class LoadData(TaskBase):
     def build_task(self, name: str):
         self.name = name
 
@@ -39,7 +39,7 @@ class LoadData(Task):
 
 
 @infer_task_type
-class PreprocessData(Task):
+class PreprocessData(TaskBase):
     raw_data_loader: Requires[Loader[Data]]
 
     def build_task(self, name: str, split_ratio: float, seed: int):
@@ -58,11 +58,11 @@ class PreprocessData(Task):
 
 
 @infer_task_type
-class TrainModel(Task):
+class TrainModel(TaskBase):
     train_loader: Requires[Loader[Data]]
     valid_loader: Requires[Loader[Data]]
     
-    def build_task(self, train: TaskLike[Loader[Data]], valid: TaskLike[Loader[Data]], train_config: dict, seed: int):
+    def build_task(self, train: Task[Loader[Data]], valid: Task[Loader[Data]], train_config: dict, seed: int):
         self.train_loader = train
         self.valid_loader = valid
         self.train_config = train_config
@@ -76,11 +76,11 @@ class TrainModel(Task):
 
 
 @infer_task_type
-class TestModel(Task):
+class TestModel(TaskBase):
     test_loader: Requires[Loader[Data]]
     model: Requires[Loader[Model]]
 
-    def build_task(self, test: TaskLike[Loader[Data]], trained_model: Task[Loader[Model]]):
+    def build_task(self, test: Task[Loader[Data]], trained_model: Task[Loader[Model]]):
         self.test_loader = test
         self.model = trained_model
     
@@ -93,7 +93,7 @@ class TestModel(Task):
 
 
 @infer_task_type
-class Main(SinkTask):
+class Main(TaskBase):
     results: RequiresList[dict]
 
     def build_task(self):

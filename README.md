@@ -18,13 +18,13 @@ pip install checkpoint-tool
 Workflow is a directed acyclic graph (DAG) of tasks, and task is a unit of work represented with a class.
 Here is an example.
 ```python
-from checkpoint import Task, Req, Requires, Const
+from checkpoint import TaskBase, Req, Requires, Const
 
 # Define a task and **its entire upstream workflow** with a class definition.
-# Inheriting `Task` is necesary, as it takes care of all the work storing and reusing the result and tracking the dependencies.
+# Inheriting `TaskBase` is necesary, as it takes care of all the work storing and reusing the result and tracking the dependencies.
 # `infer_task_type` decorator helps the type checker to infer the types of the task class. (optional)
 @infer_task_type
-class Choose(Task):
+class Choose(TaskBase):
     """ Compute the binomial coefficient. """
     # Inside a task, we first declare the values that must be computed upstream with the descriptor `Req`.
     # In this example, `Choose(n, k)` depends on `Choose(n - 1, k - 1)` and `Choose(n - 1, k)`,
@@ -85,17 +85,17 @@ Choose.clear_all_tasks()
 
 The arguments of the `init` method can be anything JSON serializable:
 ```python
-class T1(Task):
+class T1(TaskBase):
     def build_task(self, **param1):
         ...
     ...
 
-class T2(Task):
+class T2(TaskBase):
     def build_task(self, **param2):
         ...
     ...
 
-class T3(Task):
+class T3(TaskBase):
     x1 = Req()
     x2 = Req()
 
@@ -111,17 +111,18 @@ result = T3({'param1': { ... }, 'param2': { ... }}).run_graph()
 
 Otherwise they can be passed via `Task` and `Req`:
 ```python
+from checkpoint import Task
 Dataset = ...  # Some complex data structure
 Model = ...    # Some complex data structure
 
-class LoadDataset(Task):
+class LoadDataset(TaskBase):
     def build_task(self):
         pass
 
     def run_task(self) -> Dataset:
         ...
 
-class TrainModel(Task):
+class TrainModel(TaskBase):
     dataset: Requires[Datset]
 
     def build_task(self, dataset_task: Task[Dataset]):
@@ -130,7 +131,7 @@ class TrainModel(Task):
     def run_task(self) -> Model:
         ...
     
-class ScoreModel(Task):
+class ScoreModel(TaskBase):
     dataset: Requires[Datset]
     model: Requires[Model]
 
@@ -153,7 +154,7 @@ print(score_task.run_graph()
 from checkpoint import RequiresDict
 
 
-class SummarizeScores(Task):
+class SummarizeScores(TaskBase):
     scores: RequiresDict[str, float] = Req()  # Again, type annotation or assignment may be omitted.
 
     def build_task(self, task_dict: dict[str, Task[float]]):
@@ -165,13 +166,13 @@ class SummarizeScores(Task):
 
 One can also directly access the items of dictionary-valued upstream tasks.
 ```python
-class MultiOutputTask(Task):
+class MultiOutputTask(TaskBase):
     ...
 
     def run_task(self) -> dict[str, int]:
         return {'foo': 42, ...}
 
-class DownstreamTask(Task):
+class DownstreamTask(TaskBase):
     dep: Requires[int]
 
     def build_task(self):
@@ -182,7 +183,7 @@ The output of the `run_task` method should be serializable with `cloudpickle`,
 which is then compressed with `gzip`.
 The compression level can be changed as follows (defaults to 9).
 ```python
-class NoCompressionTask(Task, compress_level=0):
+class NoCompressionTask(TaskBase, compress_level=0):
     ...
 ```
 
@@ -190,7 +191,7 @@ class NoCompressionTask(Task, compress_level=0):
 To run task on job schedulers, one can add prefix to the call of task.
 ```python
 
-class TaskWithJobScheduler(Task, job_prefix=['jbsub', '-tty', '-queue x86_1h', '-cores 16+1', '-mem 64g', '-require a100_80gb']):
+class TaskWithJobScheduler(TaskBase, job_prefix=['jbsub', '-tty', '-queue x86_1h', '-cores 16+1', '-mem 64g', '-require a100_80gb']):
     ...
 ```
 
@@ -201,7 +202,7 @@ The directory is automatically created at
 `{$CP_CACHE_DIR:-./.cache}/checkpoint/{module_name}.{task_name}/data/{task_id}`
 and the contents of the directory are cleared at each task call and persist until the task is cleared.
 ```python
-class TrainModel(Task):
+class TrainModel(TaskBase):
     ...
 
     def run_task(self) -> str:
@@ -217,7 +218,7 @@ One can control the task execution with `concurrent.futures.Executor` class:
 ```python
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 
-class MyTask(Task):
+class MyTask(TaskBase):
     ...
 
 # Limit the number of parallel workers
@@ -229,10 +230,10 @@ MyTask().run_graph(executor=ThreadPoolExecutor())
 
 One can also control the concurrency at a task/channel level:
 ```python
-class TaskUsingGPU(Task, channel='<gpu>'):
+class TaskUsingGPU(TaskBase, channel='<gpu>'):
     ...
 
-class AnotherTaskUsingGPU(Task, channel=['<gpu>', '<memory>']):
+class AnotherTaskUsingGPU(TaskBase, channel=['<gpu>', '<memory>']):
     ...
 
 # Queue-level concurrency control
@@ -249,7 +250,7 @@ We can use checkpoint-tool from commandline like `python -m checkpoint.app path/
 ```python
 # taskfile.py
 
-class Main(Task):
+class Main(TaskBase):
     ...
 ```
 The command runs the `Main()` task and stores the cache right next to `taskfile.py` as `.cache/checkpoint/...`.

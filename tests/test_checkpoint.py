@@ -1,12 +1,11 @@
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 import pytest
-from checkpoint import infer_task_type, Task, Req, Requires, Const, RequiresDict
-from checkpoint.task import SourceTask
+from checkpoint import infer_task_type, TaskBase, Req, Requires, Const, RequiresDict
 
 
 @infer_task_type
-class Choose(Task):
+class Choose(TaskBase):
     prev1: Requires[int] = Req()
     prev2: Requires[int] = Req()
 
@@ -60,7 +59,7 @@ def test_graph():
 
 
 @infer_task_type
-class TaskA(Task, channel=['<mychan>', '<another_chan>']):
+class TaskA(TaskBase, channel=['<mychan>', '<another_chan>']):
     def build_task(self): ...
 
     def run_task(self) -> str:
@@ -68,7 +67,7 @@ class TaskA(Task, channel=['<mychan>', '<another_chan>']):
 
 
 @infer_task_type
-class TaskB(Task, channel='<mychan>'):
+class TaskB(TaskBase, channel='<mychan>'):
     def build_task(self): ...
     
     def run_task(self) -> str:
@@ -76,7 +75,7 @@ class TaskB(Task, channel='<mychan>'):
 
 
 @infer_task_type
-class TaskC(Task, compress_level=-1):
+class TaskC(TaskBase, compress_level=-1):
     a: Requires[str] = Req()
     b: Requires[str] = Req()
 
@@ -98,7 +97,7 @@ def test_multiple_tasks():
 
 
 @infer_task_type
-class TaskRaise(Task):
+class TaskRaise(TaskBase):
     def build_task(self): ...
     def run_task(self):
         raise ValueError(42)
@@ -110,7 +109,7 @@ def test_raise():
 
 
 @infer_task_type
-class CreateFile(Task):
+class CreateFile(TaskBase):
 
     def build_task(self, content: str):
         self.content = content
@@ -123,7 +122,7 @@ class CreateFile(Task):
 
 
 @infer_task_type
-class GreetWithFile(Task):
+class GreetWithFile(TaskBase):
     filepath: Requires[str] = Req()
 
     def build_task(self, name: str):
@@ -168,7 +167,7 @@ def test_requires_directory():
 
 
 @infer_task_type
-class CountElem(Task):
+class CountElem(TaskBase):
     def build_task(self, x: list | dict):
         self.x = x
 
@@ -177,7 +176,7 @@ class CountElem(Task):
 
 
 @infer_task_type
-class SummarizeParam(Task):
+class SummarizeParam(TaskBase):
     d_counts: RequiresDict[str, int] = Req()
 
     def build_task(self, **params: Any):
@@ -197,7 +196,7 @@ def test_json_param():
 
 
 @infer_task_type
-class MultiResultTask(Task):
+class MultiResultTask(TaskBase):
     def build_task(self) -> None:
         pass
 
@@ -206,7 +205,7 @@ class MultiResultTask(Task):
 
 
 @infer_task_type
-class DownstreamTask(Task):
+class DownstreamTask(TaskBase):
     up: Requires[str]
 
     def build_task(self) -> None:
@@ -223,9 +222,8 @@ def test_mapping():
 
 
 @infer_task_type
-class PrefixedJob(SourceTask, job_prefix=['bash', 'tests/run_with_hello.bash']):
-    def run_task(self) -> None:
-        return
+class PrefixedJob(TaskBase, job_prefix=['bash', 'tests/run_with_hello.bash']):
+    ...
 
 
 def test_job_prefix(capsys):
