@@ -93,7 +93,7 @@ class TestModel(TaskBase):
 
 
 @infer_task_type
-class Main(TaskBase, capture_output=False):
+class Main(TaskBase):
     results: RequiresList[dict]
 
     def build_task(self):

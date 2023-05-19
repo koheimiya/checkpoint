@@ -26,6 +26,7 @@ LOGGER = logging.getLogger(__name__)
 @click.option('-D', '--detect-source-change', is_flag=True, help='Automatically discard the cache per task once the source code (AST) is changed.')
 @click.option('--dont-force-entrypoint', is_flag=True, help='Do nothing if the cache of the entripoint task is up-to-date.')
 @click.option('-l', '--loglevel', type=click.Choice(['debug', 'info', 'warning', 'error']), default='warning')
+@click.option('--dont-show-progress', is_flag=True)
 def main(taskfile: Path,
          entrypoint: str,
          exec_type: str,
@@ -35,6 +36,7 @@ def main(taskfile: Path,
          detect_source_change: bool,
          dont_force_entrypoint: bool,
          loglevel: str,
+         dont_show_progress: bool,
          ) -> int:
     logging.basicConfig(level=getattr(logging, loglevel.upper()))
 
@@ -55,13 +57,19 @@ def main(taskfile: Path,
     entrypoint_task = entrypoint_fn()
     if not dont_force_entrypoint:
         entrypoint_task.clear_task()
-    _, stats = entrypoint_task.run_graph_with_stats(rate_limits=rate_limits)
+    _, stats = entrypoint_task.run_graph_with_stats(rate_limits=rate_limits, show_progress=not dont_show_progress)
 
-    LOGGER.info('Execution summary:')
-    buf = io.StringIO()
-    pprint.pprint(stats['stats'], sort_dicts=False, stream=buf)
-    for line in buf.getvalue().splitlines():
-        LOGGER.info(line)
+    # LOGGER.info('Execution summary:')
+    # buf = io.StringIO()
+    # pprint.pprint(stats['stats'], sort_dicts=False, stream=buf)
+    # for line in buf.getvalue().splitlines():
+    #     LOGGER.info(line)
+    print('==== STDOUT ====')
+    for line in open(entrypoint_task.task_stdout).readlines():
+        print(line, end='')
+    print('==== STDERR ====')
+    for line in open(entrypoint_task.task_stderr).readlines():
+        print(line, end='')
     return 0
 
 

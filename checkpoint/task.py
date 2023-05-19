@@ -169,10 +169,10 @@ class TaskWorker(Generic[R]):
                     'args': self.task_args,
                     }
             LOGGER.error(f'Error occurred while running task {task_info}')
-            LOGGER.error(f'Here is the stdout:')
+            LOGGER.error(f'Here is the stdout ({self.stdout_path}):')
             for line in out.splitlines():
                 LOGGER.error(line)
-            LOGGER.error(f'Here is the stderr:')
+            LOGGER.error(f'Here is the stderr ({self.stderr_path}):')
             for line in err.splitlines():
                 LOGGER.error(line)
             raise
@@ -300,12 +300,14 @@ class TaskType(Generic[P, R], ABC):
             max_workers: int | None = None,
             rate_limits: dict[str, int] | None = None,
             detect_source_change: bool | None = None,
+            show_progress: bool = False,
             ) -> R:
         return self.run_graph_with_stats(
                 executor=executor,
                 max_workers=max_workers,
                 rate_limits=rate_limits,
-                detect_source_change=detect_source_change
+                detect_source_change=detect_source_change,
+                show_progress=show_progress,
                 )[0]
 
     def run_graph_with_stats(
@@ -314,7 +316,8 @@ class TaskType(Generic[P, R], ABC):
             max_workers: int | None = None,
             rate_limits: dict[str, int] | None = None,
             detect_source_change: bool | None = None,
-            dump_generations: bool = False
+            dump_generations: bool = False,
+            show_progress: bool = False,
             ) -> tuple[R, dict[str, Any]]:
         if detect_source_change is None:
             detect_source_change = Context.detect_source_change
@@ -324,7 +327,7 @@ class TaskType(Generic[P, R], ABC):
             executor = Context.get_executor(max_workers=max_workers)
         else:
             assert max_workers is None
-        stats = run_task_graph(graph=graph, executor=executor, rate_limits=rate_limits, dump_graphs=dump_generations)
+        stats = run_task_graph(graph=graph, executor=executor, rate_limits=rate_limits, dump_graphs=dump_generations, show_progress=show_progress)
         return self._task_worker.get_result(), stats
 
     def get_task_result(self) -> R:

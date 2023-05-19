@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from concurrent.futures import Future, wait, FIRST_COMPLETED, Executor
 import logging
 
+from tqdm.auto import tqdm
 import cloudpickle
 import networkx as nx
 
@@ -127,12 +128,18 @@ def run_task_graph(
         executor: Executor,
         rate_limits: dict[str, int] | None = None,
         dump_graphs: bool = False,
+        show_progress: bool = False,
         ) -> dict[str, Any]:
     """ Consume task graph concurrently.
     """
     stats = {k: len(args) for k, args in graph.get_nodes_by_task().items()}
     LOGGER.debug(f'Following tasks will be called: {stats}')
     info = {'stats': stats, 'generations': []}
+
+    if show_progress:
+        progressbars = {k: tqdm(range(n), desc=k, position=i) for i, (k, n) in enumerate(stats.items())}
+    else:
+        progressbars = {}
 
     # Read concurrency budgets
     if rate_limits is None:
@@ -178,6 +185,8 @@ def run_task_graph(
             standby = defaultdict(list, leftover)
             for done_future in done:
                 queue_done, x_done = done_future.result()
+                if show_progress:
+                    progressbars[x_done[0]].update()
 
                 # Update occupied
                 for q in queue_done:
@@ -191,6 +200,9 @@ def run_task_graph(
                 # Update standby
                 for queue, task in ys.items():
                     standby[queue].extend(task)
+
+    for pbar in progressbars.values():
+        pbar.close()
 
     # Sanity check
     assert graph.size == 0, f'Graph is not empty. Should not happen.'

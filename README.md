@@ -256,9 +256,13 @@ class Main(TaskBase):
 The command runs the `Main()` task and stores the cache right next to `taskfile.py` as `.cache/checkpoint/...`.
 Please refer to `python -m checkpoint.app --help` for more info.
 
+### Other useful properties
+* `TaskBase.task_id`
+* `TaskBase.task_args`
+* `TaskBase.task_stdout`
+* `TaskBase.task_stderr`
+
 
 
 ## TODO
-- [ ] Simple visualizers
-    - [ ] Task-wise progressbar
-    - [ ] Graph visualizer
+- [ ] Task graph visualizer
