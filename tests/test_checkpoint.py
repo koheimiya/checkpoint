@@ -177,7 +177,7 @@ class CountElem(TaskBase):
 
 @infer_task_type
 class SummarizeParam(TaskBase):
-    d_counts: RequiresDict[str, int] = Req()
+    d_counts: RequiresDict[str, int]
 
     def build_task(self, **params: Any):
         self.a_params = params
