@@ -186,6 +186,14 @@ class NoCompressionTask(Task, compress_level=0):
     ...
 ```
 
+### Job scheduling and prefixes
+To run task on job schedulers, one can add prefix to the call of task.
+```python
+
+class TaskWithJobScheduler(Task, job_prefix=['jbsub', '-tty', '-queue x86_1h', '-cores 16+1', '-mem 64g', '-require a100_80gb']):
+    ...
+```
+
 ### Data directories
 
 Use `task.task_directory` to get a fresh path dedicated to each task.
