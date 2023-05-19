@@ -1,6 +1,7 @@
 from __future__ import annotations
 from abc import ABC, abstractmethod
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
+from contextlib import contextmanager, redirect_stderr, redirect_stdout
 from typing import Callable, Generic, Mapping, Protocol, Sequence, Type, TypeVar, Any, cast
 from typing_extensions import ParamSpec, Self, get_origin, overload
 from dataclasses import dataclass
@@ -12,6 +13,12 @@ import logging
 import inspect
 import json
 import shutil
+import subprocess
+import tempfile
+import cloudpickle
+import gzip
+import sys
+import io
 
 
 from .types import Json, TaskKey, Context
@@ -38,6 +45,7 @@ class TaskConfig(Generic[P, R]):
             channels: tuple[str, ...],
             compress_level: int,
             job_prefix: list[str] | None,
+            capture_output: bool,
             ) -> None:
 
         self.task_class = task_class
@@ -45,6 +53,7 @@ class TaskConfig(Generic[P, R]):
         self.db = Database.make(name=self.name, compress_level=compress_level)
         self.channels = (self.name,) + channels
         self.job_prefix = job_prefix
+        self.capture_output = capture_output
         self.worker_registry: dict[Json, TaskWorker[R]] = {}
 
         source = inspect.getsource(task_class)
@@ -107,22 +116,17 @@ class TaskWorker(Generic[R]):
         out = self.run_instance_task()
         db.save(self.arg_key, out)
 
-    def run_instance_task(self) -> Any:
+    def run_instance_task(self) -> R:
         job_prefix = self.config.job_prefix
         if job_prefix is None:
-            return self.instance.run_task()
+            return self._run_task_with_captured_output()
         else:
-            import subprocess
-            import tempfile
-            import cloudpickle
-            import gzip
-            import sys
             with tempfile.TemporaryDirectory() as dir_ref:
                 worker_path = Path(dir_ref) / 'worker.pkl'
                 result_path = Path(dir_ref) / 'result.pkl'
                 pycmd = f"""import gzip, cloudpickle
                     worker = cloudpickle.load(gzip.open("{worker_path}", "rb"))
-                    res = worker.instance.run_task()
+                    res = worker._run_task_with_captured_output()
                     cloudpickle.dump(res, gzip.open("{result_path}", "wb"))
                 """.replace('\n', ';')
                 with gzip.open(worker_path, 'wb') as worker_ref:
@@ -136,6 +140,58 @@ class TaskWorker(Generic[R]):
                 res.check_returncode()
                 with gzip.open(result_path, 'rb') as result_ref:
                     return cloudpickle.load(result_ref)
+
+    def _run_task_with_captured_output(self) -> R:
+        if not self.config.capture_output:
+            return self.instance.run_task()
+
+        stdout = io.TextIOWrapper(io.BytesIO())
+        stderr = io.TextIOWrapper(io.BytesIO())
+        out, err = b'', b''
+        try:
+            try:
+                with redirect_stdout(stdout):
+                    with redirect_stderr(stderr):
+                        return self.instance.run_task()
+            finally:
+                stdout.seek(0)
+                out = stdout.read()
+                stderr.seek(0)
+                err = stderr.read()
+                with open(self.stdout_path, 'w') as ref:
+                    ref.write(out)
+                with open(self.stderr_path, 'w') as ref:
+                    ref.write(err)
+        except:
+            task_info = {
+                    'name': self.config.name,
+                    'id': self.task_id,
+                    'args': self.task_args,
+                    }
+            LOGGER.error(f'Error occurred while running task {task_info}')
+            LOGGER.error(f'Here is the stdout:')
+            for line in out.splitlines():
+                LOGGER.error(line)
+            LOGGER.error(f'Here is the stderr:')
+            for line in err.splitlines():
+                LOGGER.error(line)
+            raise
+
+    @property
+    def task_id(self) -> int:
+        return self.config.db.id_table.get(self.arg_key)
+
+    @property
+    def task_args(self) -> dict[str, Any]:
+        return json.loads(self.arg_key)
+
+    @property
+    def stdout_path(self) -> Path:
+        return self.config.db.get_stdout_path(self.arg_key)
+
+    @property
+    def stderr_path(self) -> Path:
+        return self.config.db.get_stderr_path(self.arg_key)
 
     @property
     def _directory_uninit(self) -> Path:
@@ -188,6 +244,7 @@ class TaskType(Generic[P, R], ABC):
 
         compress_level = kwargs.pop('compress_level', 9)
         job_prefix = kwargs.pop('job_prefix', None)
+        capture_output = kwargs.pop('capture_output', True)
 
         # Fill missing requirement
         ann = inspect.get_annotations(cls, eval_str=True)
@@ -197,7 +254,7 @@ class TaskType(Generic[P, R], ABC):
                 req.__set_name__(None, k)
                 setattr(cls, k, req)
 
-        cls._task_config = TaskConfig(task_class=cls, channels=channels, compress_level=compress_level, job_prefix=job_prefix)
+        cls._task_config = TaskConfig(task_class=cls, channels=channels, compress_level=compress_level, job_prefix=job_prefix, capture_output=capture_output)
         super().__init_subclass__(**kwargs)
 
     def __init__(self, *args: P.args, **kwargs: P.kwargs) -> None:
@@ -213,6 +270,22 @@ class TaskType(Generic[P, R], ABC):
     @property
     def task_directory(self) -> Path:
         return self._task_worker.directory
+
+    @property
+    def task_id(self) -> int:
+        return self._task_worker.task_id
+
+    @property
+    def task_args(self) -> dict[str, Any]:
+        return self._task_worker.task_args
+
+    @property
+    def task_stdout(self) -> Path:
+        return self._task_worker.stdout_path
+
+    @property
+    def task_stderr(self) -> Path:
+        return self._task_worker.stderr_path
 
     @classmethod
     def clear_all_tasks(cls) -> None:

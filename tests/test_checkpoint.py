@@ -223,6 +223,9 @@ def test_mapping():
 
 @infer_task_type
 class PrefixedJob(TaskBase, job_prefix=['bash', 'tests/run_with_hello.bash']):
+    def run_task(self) -> None:
+        print('world')
+        return
     ...
 
 
@@ -233,3 +236,5 @@ def test_job_prefix(capsys):
     captured = capsys.readouterr()
     assert captured.out == 'hello\n'
     assert captured.err == ''
+
+    assert open(task.task_stdout, 'r').read() == 'world\n'

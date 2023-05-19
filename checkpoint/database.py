@@ -30,10 +30,14 @@ class Database(Generic[T]):
             * 0/
                 * args.json
                 * result.pkl.gz
+                * stdout.txt
+                * stderr.txt
                 * data/
             * 1/
                 * args.json
                 * result.pkl.gz
+                * stdout.txt
+                * stderr.txt
                 * data/
             ...
     """
@@ -71,6 +75,12 @@ class Database(Generic[T]):
 
     def get_result_path(self, key: Json) -> Path:
         return self.get_result_dir(key) / f'result.pkl.gz'
+
+    def get_stdout_path(self, key: Json) -> Path:
+        return self.get_result_dir(key) / f'stdout.txt'
+
+    def get_stderr_path(self, key: Json) -> Path:
+        return self.get_result_dir(key) / f'stderr.txt'
 
     def get_data_dir(self, key: Json) -> Path:
         return self.get_result_dir(key) / 'data'

@@ -93,7 +93,7 @@ class TestModel(TaskBase):
 
 
 @infer_task_type
-class Main(TaskBase):
+class Main(TaskBase, capture_output=False):
     results: RequiresList[dict]
 
     def build_task(self):
@@ -112,3 +112,7 @@ class Main(TaskBase):
                     )
             tasks.append(result)
         self.results = tasks
+
+    def run_task(self) -> None:
+        print('run main')
+        return
