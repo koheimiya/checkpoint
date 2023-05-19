@@ -1,6 +1,8 @@
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 import pytest
 from checkpoint import infer_task_type, Task, Req, Requires, Const, RequiresDict
+from checkpoint.task import SourceTask
 
 
 @infer_task_type
@@ -202,6 +204,7 @@ class MultiResultTask(Task):
     def run_task(self) -> dict[str, str]:
         return {'hello': 'world'}
 
+
 @infer_task_type
 class DownstreamTask(Task):
     up: Requires[str]
@@ -212,7 +215,23 @@ class DownstreamTask(Task):
     def run_task(self) -> str:
         return self.up
 
+
 def test_mapping():
     MultiResultTask.clear_all_tasks()
     DownstreamTask.clear_all_tasks()
     assert DownstreamTask().run_graph() == 'world'
+
+
+@infer_task_type
+class PrefixedJob(SourceTask, job_prefix=['bash', 'tests/run_with_hello.bash']):
+    def run_task(self) -> None:
+        return
+
+
+def test_job_prefix(capsys):
+    PrefixedJob.clear_all_tasks()
+    task = PrefixedJob()
+    task.run_graph(executor=ThreadPoolExecutor(max_workers=1))
+    captured = capsys.readouterr()
+    assert captured.out == 'hello\n'
+    assert captured.err == ''

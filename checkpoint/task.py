@@ -1,6 +1,7 @@
 from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Iterable
+from re import sub
 from typing import Callable, Generic, Mapping, Protocol, Sequence, Type, TypeVar, Any, cast
 from typing_extensions import ParamSpec, Self, get_origin, overload
 from dataclasses import dataclass
@@ -12,6 +13,7 @@ import logging
 import inspect
 import json
 import shutil
+
 
 from .types import Json, TaskKey, Context
 from .database import Database
@@ -36,12 +38,14 @@ class TaskConfig(Generic[P, R]):
             task_class: Type[TaskType[P, R]],
             channels: tuple[str, ...],
             compress_level: int,
+            job_prefix: list[str] | None,
             ) -> None:
 
         self.task_class = task_class
         self.name = _serialize_function(task_class)
         self.db = Database.make(name=self.name, compress_level=compress_level)
         self.channels = (self.name,) + channels
+        self.job_prefix = job_prefix
         self.worker_registry: dict[Json, TaskWorker[R]] = {}
 
         source = inspect.getsource(task_class)
@@ -101,8 +105,35 @@ class TaskWorker(Generic[R]):
         db = self.config.db
         if self.directory.exists():
             shutil.rmtree(self.directory)
-        out = self.instance.run_task()
+        out = self.run_instance_task()
         db.save(self.arg_key, out)
+
+    def run_instance_task(self) -> R:
+        job_prefix = self.config.job_prefix
+        if job_prefix is None:
+            return self.instance.run_task()
+        else:
+            import subprocess
+            import tempfile
+            import cloudpickle
+            import gzip
+            import sys
+            with tempfile.TemporaryDirectory() as dir_ref:
+                worker_path = Path(dir_ref) / 'worker.pkl'
+                result_path = Path(dir_ref) / 'result.pkl'
+                pycmd = f"""import gzip, cloudpickle
+                    worker = cloudpickle.load(gzip.open("{worker_path}", "rb"))
+                    res = worker.instance.run_task()
+                    cloudpickle.dump(res, gzip.open("{result_path}", "wb"))
+                """.replace('\n', ';')
+                with gzip.open(worker_path, 'wb') as worker_ref:
+                    cloudpickle.dump(self, worker_ref)
+                res = subprocess.run([*job_prefix, sys.executable, '-c', pycmd], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                print(res.stdout.decode(), end='')
+                print(res.stderr.decode(), end='', file=sys.stderr)
+                res.check_returncode()
+                with gzip.open(result_path, 'rb') as result_ref:
+                    return cloudpickle.load(result_ref)
 
     @property
     def _directory_uninit(self) -> Path:
@@ -154,6 +185,7 @@ class TaskType(Generic[P, R], ABC):
             raise ValueError('Invalid channel value:', _channel)
 
         compress_level = kwargs.pop('compress_level', 9)
+        job_prefix = kwargs.pop('job_prefix', None)
 
         # Fill missing requirement
         ann = inspect.get_annotations(cls, eval_str=True)
@@ -163,7 +195,7 @@ class TaskType(Generic[P, R], ABC):
                 req.__set_name__(None, k)
                 setattr(cls, k, req)
 
-        cls._task_config = TaskConfig(task_class=cls, channels=channels, compress_level=compress_level)
+        cls._task_config = TaskConfig(task_class=cls, channels=channels, compress_level=compress_level, job_prefix=job_prefix)
         super().__init_subclass__(**kwargs)
 
     def __init__(self, *args: P.args, **kwargs: P.kwargs) -> None:
@@ -349,3 +381,13 @@ TaskLike = Task[R] | Const[R] | _MappedTask[Any, R]
 Requires = Req[TaskLike[R], R]
 RequiresList = Req[Sequence[TaskLike[R]], list[R]]
 RequiresDict = Req[Mapping[K, TaskLike[R]], dict[K, R]]
+
+
+class SourceTask(TaskType[[], R]):
+    def build_task(self) -> None:
+        pass
+
+
+class SinkTask(TaskType[P, None]):
+    def run_task(self) -> None:
+        pass

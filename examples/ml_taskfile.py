@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import Any, Generic, NewType, Protocol, TypeVar
 
 from cloudpickle import dump, load
-from checkpoint import infer_task_type, Task, TaskLike, Requires, RequiresList
+from checkpoint import infer_task_type, Task, SinkTask, TaskLike, Requires, RequiresList
 
 
 # For demonstration
@@ -40,16 +40,16 @@ class LoadData(Task):
 
 @infer_task_type
 class PreprocessData(Task):
-    raw_data: Requires[Loader[Data]]
+    raw_data_loader: Requires[Loader[Data]]
 
     def build_task(self, name: str, split_ratio: float, seed: int):
         self.name = name
         self.split_ratio = split_ratio
         self.seed = seed
-        self.raw_data = LoadData(name)
+        self.raw_data_loader = LoadData(name)
 
     def run_task(self) -> dict[str, Loader[Data]]:
-        data = self.raw_data.load()
+        data = self.raw_data_loader.load()
         # Split the dataset at data_path into splits ...
         train_loader = PickleLoader(Data('<train data>'), self.task_directory / 'train.txt')
         valid_loader = PickleLoader(Data('<valid data>'), self.task_directory / 'valid.txt')
@@ -59,33 +59,33 @@ class PreprocessData(Task):
 
 @infer_task_type
 class TrainModel(Task):
-    train_data: Requires[Loader[Data]]
-    valid_data: Requires[Loader[Data]]
+    train_loader: Requires[Loader[Data]]
+    valid_loader: Requires[Loader[Data]]
     
     def build_task(self, train: TaskLike[Loader[Data]], valid: TaskLike[Loader[Data]], train_config: dict, seed: int):
-        self.train_data = train
-        self.valid_data = valid
+        self.train_loader = train
+        self.valid_loader = valid
         self.train_config = train_config
         self.seed = seed
     
     def run_task(self) -> Loader[Model]:
-        train_data = self.train_data.load()
-        valid_data = self.valid_data.load()
+        train_data = self.train_loader.load()
+        valid_data = self.valid_loader.load()
         # Train model with data and save it to trained_path ...
         return PickleLoader(Model('<trained model>'), self.task_directory / 'trained.bin')
 
 
 @infer_task_type
 class TestModel(Task):
-    test_data: Requires[Loader[Data]]
+    test_loader: Requires[Loader[Data]]
     model: Requires[Loader[Model]]
 
     def build_task(self, test: TaskLike[Loader[Data]], trained_model: Task[Loader[Model]]):
-        self.test_data = test
+        self.test_loader = test
         self.model = trained_model
     
     def run_task(self) -> dict[str, Any]:
-        test_data = self.test_data.load()
+        test_data = self.test_loader.load()
         model = self.model.load()
         # Evaluate model on test_data ...
         result = {'score': ...}
@@ -93,7 +93,7 @@ class TestModel(Task):
 
 
 @infer_task_type
-class Main(Task):
+class Main(SinkTask):
     results: RequiresList[dict]
 
     def build_task(self):
@@ -112,7 +112,3 @@ class Main(Task):
                     )
             tasks.append(result)
         self.results = tasks
-
-    def run_task(self) -> list[dict]:
-        print('running main')
-        return self.results
