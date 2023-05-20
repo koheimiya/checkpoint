@@ -145,23 +145,12 @@ class TaskWorker(Generic[R]):
         if not self.config.capture_output:
             return self.instance.run_task()
 
-        stdout = io.TextIOWrapper(io.BytesIO())
-        stderr = io.TextIOWrapper(io.BytesIO())
-        out, err = b'', b''
         try:
-            try:
-                with redirect_stdout(stdout):
-                    with redirect_stderr(stderr):
-                        return self.instance.run_task()
-            finally:
-                stdout.seek(0)
-                out = stdout.read()
-                stderr.seek(0)
-                err = stderr.read()
-                with open(self.stdout_path, 'w') as ref:
-                    ref.write(out)
-                with open(self.stderr_path, 'w') as ref:
-                    ref.write(err)
+            with open(self.stdout_path, 'w+') as stdout:
+                with open(self.stderr_path, 'w+') as stderr:
+                    with redirect_stdout(stdout):
+                        with redirect_stderr(stderr):
+                            return self.instance.run_task()
         except:
             task_info = {
                     'name': self.config.name,
@@ -170,10 +159,10 @@ class TaskWorker(Generic[R]):
                     }
             LOGGER.error(f'Error occurred while running task {task_info}')
             LOGGER.error(f'Here is the stdout ({self.stdout_path}):')
-            for line in out.splitlines():
+            for line in open(self.stdout_path).readlines():
                 LOGGER.error(line)
             LOGGER.error(f'Here is the stderr ({self.stderr_path}):')
-            for line in err.splitlines():
+            for line in open(self.stderr_path).readlines():
                 LOGGER.error(line)
             raise
 

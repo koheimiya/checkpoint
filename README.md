@@ -1,4 +1,4 @@
-# Checkpoint-tool
+# taskproc
 
 A lightweight workflow building/execution/management tool written in pure Python.
 
