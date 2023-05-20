@@ -23,7 +23,7 @@ DEFAULT_SERIALIZER: Serializer = (cloudpickle.dumps, cloudpickle.loads)
 class Database(Generic[T]):
     """ Manage the cache of tasks.
     Layout:
-    Context.cache_dir/'taskprocessing'/name/
+    Context.cache_dir/'taskproc'/name/
         * source.txt
         * id_table
         * results/
@@ -49,7 +49,7 @@ class Database(Generic[T]):
 
     @classmethod
     def make(cls, name: str, compress_level: int) -> Self:
-        base_path = Context.cache_dir / 'taskprocessing' / name
+        base_path = Context.cache_dir / 'taskproc' / name
         return Database(
                 name=name,
                 base_path=base_path,

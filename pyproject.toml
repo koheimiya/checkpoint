@@ -1,13 +1,13 @@
 [tool.poetry]
-name = "taskprocessing"
+name = "taskproc"
 version = "0.11.1"
-description = "A lightweight task processgin library written in pure Python"
+description = "A lightweight task processing library written in pure Python"
 authors = ["Kohei Miyaguchi <koheimiyaguchi@gmail.com>"]
 license = "MIT License"
-homepage = "https://github.com/koheimiya/taskprocessing"
-repository = "https://github.com/koheimiya/taskprocessing"
+homepage = "https://github.com/koheimiya/taskproc"
+repository = "https://github.com/koheimiya/taskproc"
 readme = "README.md"
-packages = [{include = "taskprocessing"}]
+packages = [{include = "taskproc"}]
 
 [tool.poetry.dependencies]
 python = "^3.10"

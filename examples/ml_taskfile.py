@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import Any, Generic, NewType, Protocol, TypeVar
 
 from cloudpickle import dump, load
-from taskprocessing import infer_task_type, TaskBase, Task, Requires, RequiresList
+from taskproc import infer_task_type, TaskBase, Task, Requires, RequiresList
 
 
 # For demonstration
