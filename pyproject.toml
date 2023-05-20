@@ -1,13 +1,13 @@
 [tool.poetry]
-name = "checkpoint-tool"
+name = "taskprocessing"
 version = "0.11.1"
-description = "A lightweight workflow management tool written in pure Python"
+description = "A lightweight task processgin library written in pure Python"
 authors = ["Kohei Miyaguchi <koheimiyaguchi@gmail.com>"]
 license = "MIT License"
-homepage = "https://github.com/koheimiya/checkpoint"
-repository = "https://github.com/koheimiya/checkpoint"
+homepage = "https://github.com/koheimiya/taskprocessing"
+repository = "https://github.com/koheimiya/taskprocessing"
 readme = "README.md"
-packages = [{include = "checkpoint"}]
+packages = [{include = "taskprocessing"}]
 
 [tool.poetry.dependencies]
 python = "^3.10"

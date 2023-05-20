@@ -8,7 +8,7 @@ Internally, it depends on `DiskCache`, `cloudpickle` `networkx` and `concurrent.
 ## Installation
 
 ```
-pip install checkpoint-tool
+pip install taskprocessing
 ```
 
 ## Usage
@@ -18,7 +18,7 @@ pip install checkpoint-tool
 Workflow is a directed acyclic graph (DAG) of tasks, and task is a unit of work represented with a class.
 Here is an example.
 ```python
-from checkpoint import TaskBase, Req, Requires, Const
+from taskprocessing import TaskBase, Req, Requires, Const
 
 # Define a task and **its entire upstream workflow** with a class definition.
 # Inheriting `TaskBase` is necesary, as it takes care of all the work storing and reusing the result and tracking the dependencies.
@@ -61,7 +61,7 @@ ans = Choose(6, 3).run_graph()  # `ans` should be 6 Choose 3, which is 20.
 # It greedily executes all the necessary tasks as parallel as possible
 # and then spits out the return value of the task on which we call `run_graph()`.
 # The return values of the intermediate tasks are cached at
-# `{$CP_CACHE_DIR:-./.cache}/checkpoint/{module_name}.{task_name}/...`
+# `{$CP_CACHE_DIR:-./.cache}/taskprocessing/{module_name}.{task_name}/...`
 # and reused on the fly whenever possible.
 ```
 
@@ -77,7 +77,7 @@ Choose(3, 3).clear_task()
 ans = Choose(6, 3).run_graph()
 
 # Delete all the cache associated with `Choose`,
-# equivalent to `rm -r {$CP_CACHE_DIR:-./.cache}/checkpoint/{module_name}.Choose`.
+# equivalent to `rm -r {$CP_CACHE_DIR:-./.cache}/taskprocessing/{module_name}.Choose`.
 Choose.clear_all_tasks()            
 ```
 
@@ -111,7 +111,7 @@ result = T3({'param1': { ... }, 'param2': { ... }}).run_graph()
 
 Otherwise they can be passed via `Task` and `Req`:
 ```python
-from checkpoint import Task
+from taskprocessing import Task
 Dataset = ...  # Some complex data structure
 Model = ...    # Some complex data structure
 
@@ -151,7 +151,7 @@ print(score_task.run_graph()
 
 `Req` accepts a list/dict of tasks and automatically unfolds it.
 ```python
-from checkpoint import RequiresDict
+from taskprocessing import RequiresDict
 
 
 class SummarizeScores(TaskBase):
@@ -199,7 +199,7 @@ class TaskWithJobScheduler(TaskBase, job_prefix=['jbsub', '-tty', '-queue x86_1h
 
 Use `task.task_directory` to get a fresh path dedicated to each task.
 The directory is automatically created at
-`{$CP_CACHE_DIR:-./.cache}/checkpoint/{module_name}.{task_name}/data/{task_id}`
+`{$CP_CACHE_DIR:-./.cache}/taskprocessing/{module_name}.{task_name}/data/{task_id}`
 and the contents of the directory are cleared at each task call and persist until the task is cleared.
 ```python
 class TrainModel(TaskBase):
@@ -246,15 +246,15 @@ SomeDownstreamTask().run_graph(rate_limits={TaskUsingGPU.task_name: 1})
 ```
 
 ### Commandline tool
-We can use checkpoint-tool from commandline like `python -m checkpoint.app path/to/taskfile.py`, where `taskfile.py` defines the `Main` task as follows:
+We can use taskprocessing from commandline like `python -m taskprocessing.app path/to/taskfile.py`, where `taskfile.py` defines the `Main` task as follows:
 ```python
 # taskfile.py
 
 class Main(TaskBase):
     ...
 ```
-The command runs the `Main()` task and stores the cache right next to `taskfile.py` as `.cache/checkpoint/...`.
-Please refer to `python -m checkpoint.app --help` for more info.
+The command runs the `Main()` task and stores the cache right next to `taskfile.py` as `.cache/taskprocessing/...`.
+Please refer to `python -m taskprocessing.app --help` for more info.
 
 ### Other useful properties
 * `TaskBase.task_id`

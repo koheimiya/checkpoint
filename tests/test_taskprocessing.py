@@ -1,7 +1,7 @@
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 import pytest
-from checkpoint import infer_task_type, TaskBase, Req, Requires, Const, RequiresDict
+from taskprocessing import infer_task_type, TaskBase, Req, Requires, Const, RequiresDict
 
 
 @infer_task_type

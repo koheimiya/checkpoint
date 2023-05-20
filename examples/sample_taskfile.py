@@ -1,4 +1,4 @@
-from checkpoint import infer_task_type, Task
+from taskprocessing import infer_task_type, Task
 
 
 @infer_task_type
