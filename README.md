@@ -1,9 +1,18 @@
 # taskproc
 
 A lightweight workflow building/execution/management tool written in pure Python.
-
 Internally, it depends on `DiskCache`, `cloudpickle` `networkx` and `concurrent.futures`.
 
+#### Features
+* Decomposing long and complex computation into tasks, i.e., smaller units of work.
+* Executing them in a distributed way, supporting multithreading, multiprocessing, local clusters/containers.
+* Creating/discarding caches per task and reusing them whenever possible. 
+
+#### Nonfeatures
+* Automatic retry
+* External service integration with remote clusters/containers or cloud platforms (GCP, AWS, ...)
+* Periodic scheduling
+* GUI dashboard
 
 ## Installation
 
@@ -29,9 +38,8 @@ class Choose(TaskBase):
     # Inside a task, we first declare the values that must be computed upstream with the descriptor `Req`.
     # In this example, `Choose(n, k)` depends on `Choose(n - 1, k - 1)` and `Choose(n - 1, k)`,
     # so it requires two `int` values.
-    # Either the type annotation `Requires[...]` or the assignment `= Req()` may be omitted.
-    prev1: Requires[int] = Req()
-    prev2: Requires[int] = Req()
+    prev1: Requires[int]
+    prev2: Requires[int]
 
     def build_task(self, n: int, k: int):
         # The prerequisite tasks and the other instance attributes are prepared here.
@@ -61,7 +69,7 @@ ans = Choose(6, 3).run_graph()  # `ans` should be 6 Choose 3, which is 20.
 # It greedily executes all the necessary tasks as parallel as possible
 # and then spits out the return value of the task on which we call `run_graph()`.
 # The return values of the intermediate tasks are cached at
-# `{$CP_CACHE_DIR:-./.cache}/taskproc/{module_name}.{task_name}/...`
+# `{$CP_CACHE_DIR:-./.cache}/taskproc/{module_name}.{task_name}/results/...`
 # and reused on the fly whenever possible.
 ```
 
@@ -83,32 +91,23 @@ Choose.clear_all_tasks()
 
 ### Task IO
 
-The arguments of the `init` method can be anything JSON serializable:
+The arguments of the `build_task` method can be anything JSON serializable including `Task`s:
 ```python
-class T1(TaskBase):
-    def build_task(self, **param1):
-        ...
-    ...
-
-class T2(TaskBase):
-    def build_task(self, **param2):
-        ...
-    ...
-
-class T3(TaskBase):
-    x1 = Req()
-    x2 = Req()
-
-    def build_task(self, json_params):
-        self.x1 = T1(**json_params['param1'])
-        self.x2 = T2(**json_params['param2'])
-
-    def run_task(self):
+class MyTask(TaskBase):
+    def build_task(self, param1, param2):
         ...
 
-result = T3({'param1': { ... }, 'param2': { ... }}).run_graph()
+MyTask(
+    param1={
+        'upstream_task0': UpstreamTask(),
+        'other_params': [1, 2],
+        ...
+    },
+    param2={ ... }
+}).run_graph()
 ```
 
+<!--
 Otherwise they can be passed via `Task` and `Req`:
 ```python
 from taskproc import Task
@@ -163,12 +162,19 @@ class SummarizeScores(TaskBase):
     def run_task(self) -> float:
         return sum(self.scores.values()) / len(self.scores)  # We have access to the dict of the results.
 ```
+-->
 
-One can also directly access the items of dictionary-valued upstream tasks.
+The output of the `run_task` method should be serializable with `cloudpickle`,
+which is then compressed with `gzip`.
+The compression level can be changed as follows (defaults to 9).
+```python
+class NoCompressionTask(TaskBase, compress_level=0):
+    ...
+```
+
+If the output is a dictionary, one can directly access its element:
 ```python
 class MultiOutputTask(TaskBase):
-    ...
-
     def run_task(self) -> dict[str, int]:
         return {'foo': 42, ...}
 
@@ -179,19 +185,12 @@ class DownstreamTask(TaskBase):
         self.dep = MultiOutputTask()['foo']
 ```
 
-The output of the `run_task` method should be serializable with `cloudpickle`,
-which is then compressed with `gzip`.
-The compression level can be changed as follows (defaults to 9).
-```python
-class NoCompressionTask(TaskBase, compress_level=0):
-    ...
-```
 
 ### Job scheduling and prefixes
 To run task on job schedulers, one can add prefix to the call of task.
 ```python
 
-class TaskWithJobScheduler(TaskBase, job_prefix=['jbsub', '-tty', '-queue x86_1h', '-cores 16+1', '-mem 64g', '-require a100_80gb']):
+class TaskWithJobScheduler(TaskBase, job_prefix=['jbsub', '-interactive', '-tty', '-queue x86_1h', '-cores 16+1', '-mem 64g']):
     ...
 ```
 
@@ -203,8 +202,6 @@ The directory is automatically created at
 and the contents of the directory are cleared at each task call and persist until the task is cleared.
 ```python
 class TrainModel(TaskBase):
-    ...
-
     def run_task(self) -> str:
         ...
         model_path = self.task_directory / 'model.bin'
@@ -257,12 +254,10 @@ The command runs the `Main()` task and stores the cache right next to `taskfile.
 Please refer to `python -m taskproc.app --help` for more info.
 
 ### Other useful properties
-* `TaskBase.task_id`
-* `TaskBase.task_args`
-* `TaskBase.task_stdout`
-* `TaskBase.task_stderr`
-
-
+* `TaskBase.task_id`: An integer id for each task
+* `TaskBase.task_args`: The argument of the task
+* `TaskBase.task_stdout`: path to the task's stdout
+* `TaskBase.task_stderr`: Path to the task's stderr
 
 ## TODO
 - [ ] Task graph visualizer
