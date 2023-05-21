@@ -6,7 +6,7 @@ Internally, it depends on `DiskCache`, `cloudpickle` `networkx` and `concurrent.
 #### Features
 * Decomposing long and complex computation into tasks, i.e., smaller units of work with a acyclic dependency graph.
 * Executing them in a distributed way, supporting multithreading, multiprocessing and local containers/clusters.
-* Creating/discarding caches per task and reusing them whenever possible. 
+* Automatically creating/discarding/reusing caches per task. 
 
 #### Nonfeatures
 * Periodic scheduling
