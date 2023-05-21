@@ -253,11 +253,17 @@ class Main(TaskBase):
 The command runs the `Main()` task and stores the cache right next to `taskfile.py` as `.cache/taskproc/...`.
 Please refer to `python -m taskproc.app --help` for more info.
 
-### Other useful properties
-* `TaskBase.task_id`: An integer id for each task
-* `TaskBase.task_args`: The argument of the task
-* `TaskBase.task_stdout`: path to the task's stdout
-* `TaskBase.task_stderr`: Path to the task's stderr
+### Built-in properties
+Here is the built-in properties of task:
+
+| Property | Owner | Description |
+|--|--|--|
+| `task_name`   | class    | String id of the task class |
+| `task_id`     | instance | Integer id of the task, unique within the same task class  |
+| `task_args`   | instance | The arguments of the task in JSON |
+| `task_directory` | instance | Path to the data directory of the task |
+| `task_stdout` | instance | Path to the task's stdout |
+| `task_stderr` | instance | Path to the task's stderr |
 
 ## TODO
 - [ ] Task graph visualizer
