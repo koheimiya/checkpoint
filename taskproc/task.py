@@ -1,7 +1,7 @@
 from __future__ import annotations
 from abc import ABC, abstractmethod
-from collections.abc import Iterable, Iterator
-from contextlib import contextmanager, redirect_stderr, redirect_stdout
+from collections.abc import Iterable
+from contextlib import redirect_stderr, redirect_stdout
 from typing import Callable, Generic, Mapping, Protocol, Sequence, Type, TypeVar, Any, cast
 from typing_extensions import ParamSpec, Self, get_origin, overload
 from dataclasses import dataclass
@@ -18,7 +18,6 @@ import tempfile
 import cloudpickle
 import gzip
 import sys
-import io
 
 
 from .types import Json, TaskKey, Context
