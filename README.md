@@ -29,9 +29,8 @@ class Choose(TaskBase):
     # Inside a task, we first declare the values that must be computed upstream with the descriptor `Req`.
     # In this example, `Choose(n, k)` depends on `Choose(n - 1, k - 1)` and `Choose(n - 1, k)`,
     # so it requires two `int` values.
-    # Either the type annotation `Requires[...]` or the assignment `= Req()` may be omitted.
-    prev1: Requires[int] = Req()
-    prev2: Requires[int] = Req()
+    prev1: Requires[int]
+    prev2: Requires[int]
 
     def build_task(self, n: int, k: int):
         # The prerequisite tasks and the other instance attributes are prepared here.
@@ -83,32 +82,24 @@ Choose.clear_all_tasks()
 
 ### Task IO
 
-The arguments of the `init` method can be anything JSON serializable:
+The arguments of the `build_task` method can be anything JSON serializable including `Task`s:
 ```python
-class T1(TaskBase):
-    def build_task(self, **param1):
+class MyTask(TaskBase):
+    def build_task(self, param1, param2):
         ...
     ...
 
-class T2(TaskBase):
-    def build_task(self, **param2):
+result = MyTask(
+    param1={
+        'upstream_task0': UpstreamTask(),
+        'other_params': [1, 2],
         ...
-    ...
-
-class T3(TaskBase):
-    x1 = Req()
-    x2 = Req()
-
-    def build_task(self, json_params):
-        self.x1 = T1(**json_params['param1'])
-        self.x2 = T2(**json_params['param2'])
-
-    def run_task(self):
-        ...
-
-result = T3({'param1': { ... }, 'param2': { ... }}).run_graph()
+    },
+    param2={ ... }
+}).run_graph()
 ```
 
+<!--
 Otherwise they can be passed via `Task` and `Req`:
 ```python
 from taskproc import Task
@@ -163,6 +154,7 @@ class SummarizeScores(TaskBase):
     def run_task(self) -> float:
         return sum(self.scores.values()) / len(self.scores)  # We have access to the dict of the results.
 ```
+-->
 
 One can also directly access the items of dictionary-valued upstream tasks.
 ```python
