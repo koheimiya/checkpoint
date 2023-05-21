@@ -1,9 +1,18 @@
 # taskproc
 
 A lightweight workflow building/execution/management tool written in pure Python.
-
 Internally, it depends on `DiskCache`, `cloudpickle` `networkx` and `concurrent.futures`.
 
+#### Features
+* Decomposing long and complex computation into tasks, i.e., smaller units of work.
+* Executing them in a distributed way, supporting multithreading, multiprocessing, local clusters/containers.
+* Creating/discarding caches per task and reusing them whenever possible. 
+
+#### Nonfeatures
+* Automatic retry
+* External service integration with remote clusters/containers or cloud platforms (GCP, AWS, ...)
+* Periodic scheduling
+* GUI Dashboard
 
 ## Installation
 
@@ -60,7 +69,7 @@ ans = Choose(6, 3).run_graph()  # `ans` should be 6 Choose 3, which is 20.
 # It greedily executes all the necessary tasks as parallel as possible
 # and then spits out the return value of the task on which we call `run_graph()`.
 # The return values of the intermediate tasks are cached at
-# `{$CP_CACHE_DIR:-./.cache}/taskproc/{module_name}.{task_name}/...`
+# `{$CP_CACHE_DIR:-./.cache}/taskproc/{module_name}.{task_name}/results/...`
 # and reused on the fly whenever possible.
 ```
 
@@ -87,9 +96,8 @@ The arguments of the `build_task` method can be anything JSON serializable inclu
 class MyTask(TaskBase):
     def build_task(self, param1, param2):
         ...
-    ...
 
-result = MyTask(
+MyTask(
     param1={
         'upstream_task0': UpstreamTask(),
         'other_params': [1, 2],
@@ -156,11 +164,17 @@ class SummarizeScores(TaskBase):
 ```
 -->
 
-One can also directly access the items of dictionary-valued upstream tasks.
+The output of the `run_task` method should be serializable with `cloudpickle`,
+which is then compressed with `gzip`.
+The compression level can be changed as follows (defaults to 9).
+```python
+class NoCompressionTask(TaskBase, compress_level=0):
+    ...
+```
+
+If the output is a dictionary, one can directly access its element:
 ```python
 class MultiOutputTask(TaskBase):
-    ...
-
     def run_task(self) -> dict[str, int]:
         return {'foo': 42, ...}
 
@@ -171,19 +185,12 @@ class DownstreamTask(TaskBase):
         self.dep = MultiOutputTask()['foo']
 ```
 
-The output of the `run_task` method should be serializable with `cloudpickle`,
-which is then compressed with `gzip`.
-The compression level can be changed as follows (defaults to 9).
-```python
-class NoCompressionTask(TaskBase, compress_level=0):
-    ...
-```
 
 ### Job scheduling and prefixes
 To run task on job schedulers, one can add prefix to the call of task.
 ```python
 
-class TaskWithJobScheduler(TaskBase, job_prefix=['jbsub', '-tty', '-queue x86_1h', '-cores 16+1', '-mem 64g', '-require a100_80gb']):
+class TaskWithJobScheduler(TaskBase, job_prefix=['jbsub', '-interactive', '-tty', '-queue x86_1h', '-cores 16+1', '-mem 64g']):
     ...
 ```
 
@@ -195,8 +202,6 @@ The directory is automatically created at
 and the contents of the directory are cleared at each task call and persist until the task is cleared.
 ```python
 class TrainModel(TaskBase):
-    ...
-
     def run_task(self) -> str:
         ...
         model_path = self.task_directory / 'model.bin'
@@ -249,12 +254,10 @@ The command runs the `Main()` task and stores the cache right next to `taskfile.
 Please refer to `python -m taskproc.app --help` for more info.
 
 ### Other useful properties
-* `TaskBase.task_id`
-* `TaskBase.task_args`
-* `TaskBase.task_stdout`
-* `TaskBase.task_stderr`
-
-
+* `TaskBase.task_id`: An integer id for each task
+* `TaskBase.task_args`: The argument of the task
+* `TaskBase.task_stdout`: path to the task's stdout
+* `TaskBase.task_stderr`: Path to the task's stderr
 
 ## TODO
 - [ ] Task graph visualizer
