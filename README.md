@@ -4,7 +4,7 @@ A lightweight workflow building/execution/management tool written in pure Python
 Internally, it depends on `DiskCache`, `cloudpickle` `networkx` and `concurrent.futures`.
 
 #### Features
-* Decomposing long and complex computation into tasks, i.e., smaller units of work with a acyclic dependency graph.
+* Decomposing long and complex computation into tasks, i.e., smaller units of work with dependencies.
 * Executing them in a distributed way, supporting multithreading, multiprocessing and local containers/clusters.
 * Automatically creating/discarding/reusing caches per task. 
 
