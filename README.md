@@ -12,7 +12,7 @@ Internally, it depends on `DiskCache`, `cloudpickle` `networkx` and `concurrent.
 * Automatic retry
 * External service integration with remote clusters/containers or cloud platforms (GCP, AWS, ...)
 * Periodic scheduling
-* GUI Dashboard
+* GUI dashboard
 
 ## Installation
 
