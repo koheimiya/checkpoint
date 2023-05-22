@@ -1,7 +1,7 @@
 from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Iterable
-from contextlib import redirect_stderr, redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout, ExitStack
 from typing import Callable, Generic, Mapping, Protocol, Sequence, Type, TypeVar, Any, cast
 from typing_extensions import ParamSpec, Self, get_origin, overload
 from dataclasses import dataclass
@@ -14,7 +14,6 @@ import inspect
 import json
 import shutil
 import subprocess
-import tempfile
 import cloudpickle
 import gzip
 import sys
@@ -43,7 +42,7 @@ class TaskConfig(Generic[P, R]):
             task_class: Type[TaskType[P, R]],
             channels: tuple[str, ...],
             compress_level: int,
-            job_prefix: list[str] | None,
+            prefix_command: str | None,
             detach_output: bool,
             ) -> None:
 
@@ -51,7 +50,7 @@ class TaskConfig(Generic[P, R]):
         self.name = _serialize_function(task_class)
         self.db = Database.make(name=self.name, compress_level=compress_level)
         self.channels = (self.name,) + channels
-        self.job_prefix = job_prefix
+        self.prefix_command = prefix_command
         self.detach_output = detach_output
         self.worker_registry: dict[Json, TaskWorker[R]] = {}
 
@@ -118,8 +117,8 @@ class TaskWorker(Generic[R]):
         db.save(self.arg_key, out)
 
     def run_instance_task(self) -> R:
-        job_prefix = self.config.job_prefix
-        if job_prefix is None:
+        prefix_command = self.config.prefix_command
+        if prefix_command is None:
             return self.instance.run_task()
         else:
             # with tempfile.TemporaryDirectory() as dir_ref:
@@ -138,7 +137,7 @@ class TaskWorker(Generic[R]):
                 with gzip.open(worker_path, 'wb') as worker_ref:
                     cloudpickle.dump(self, worker_ref)
                 process = subprocess.Popen(
-                        ' '.join([*job_prefix, sys.executable, '-c', repr(pycmd)]),
+                        ' '.join([prefix_command, sys.executable, '-c', repr(pycmd)]),
                         stdout=subprocess.PIPE,
                         stderr=subprocess.PIPE,
                         shell=True,
@@ -163,11 +162,12 @@ class TaskWorker(Generic[R]):
             return self.run_instance_task()
 
         try:
-            with open(self.stdout_path, 'w+') as stdout:
-                with open(self.stderr_path, 'w+') as stderr:
-                    with redirect_stdout(stdout):
-                        with redirect_stderr(stderr):
-                            return self.run_instance_task()
+            with ExitStack() as stack:
+                stdout = stack.enter_context(open(self.stdout_path, 'w+'))
+                stderr = stack.enter_context(open(self.stderr_path, 'w+'))
+                stack.enter_context(redirect_stdout(stdout))
+                stack.enter_context(redirect_stderr(stderr))
+                return self.run_instance_task()
         except:
             task_info = {
                     'name': self.config.name,
@@ -175,13 +175,15 @@ class TaskWorker(Generic[R]):
                     'args': self.task_args,
                     }
             LOGGER.error(f'Error occurred while running detached task {task_info}')
-            LOGGER.error(f'Here is the stdout ({self.stdout_path}):')
-            for line in open(self.stdout_path).readlines():
-                LOGGER.error(line)
-            LOGGER.error(f'Here is the stderr ({self.stderr_path}):')
-            for line in open(self.stderr_path).readlines():
-                LOGGER.error(line)
+            if self.config.detach_output:
+                LOGGER.error(f'Here is the detached stdout ({self.stdout_path}):')
+                for line in open(self.stdout_path).readlines():
+                    LOGGER.error(line)
+                LOGGER.error(f'Here is the detached stderr ({self.stderr_path}):')
+                for line in open(self.stderr_path).readlines():
+                    LOGGER.error(line)
             raise
+        raise NotImplementedError('Should not happen')
 
     @property
     def task_id(self) -> int:
@@ -259,7 +261,7 @@ class TaskType(Generic[P, R], ABC):
             raise ValueError('Invalid channel value:', _channel)
 
         compress_level = kwargs.pop('compress_level', 9)
-        job_prefix = kwargs.pop('job_prefix', None)
+        prefix_command = kwargs.pop('prefix_command', None)
         detach_output = kwargs.pop('detach_output', True)
 
         # Fill missing requirement
@@ -270,7 +272,7 @@ class TaskType(Generic[P, R], ABC):
                 req.__set_name__(None, k)
                 setattr(cls, k, req)
 
-        cls._task_config = TaskConfig(task_class=cls, channels=channels, compress_level=compress_level, job_prefix=job_prefix, detach_output=detach_output)
+        cls._task_config = TaskConfig(task_class=cls, channels=channels, compress_level=compress_level, prefix_command=prefix_command, detach_output=detach_output)
         super().__init_subclass__(**kwargs)
 
     def __init__(self, *args: P.args, **kwargs: P.kwargs) -> None:

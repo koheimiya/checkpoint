@@ -243,7 +243,7 @@ SomeDownstreamTask().run_graph(rate_limits={TaskUsingGPU.task_name: 1})
 ```
 
 ### Commandline tool
-We can use taskproc from commandline like `python -m taskproc.app path/to/taskfile.py`, where `taskfile.py` defines the `Main` task as follows:
+We can use taskproc from commandline like `taskproc path/to/taskfile.py`, where `taskfile.py` defines the `Main` task as follows:
 ```python
 # taskfile.py
 
@@ -251,7 +251,7 @@ class Main(TaskBase):
     ...
 ```
 The command runs the `Main()` task and stores the cache right next to `taskfile.py` as `.cache/taskproc/...`.
-Please refer to `python -m taskproc.app --help` for more info.
+Please refer to `taskproc --help` for more info.
 
 ### Built-in properties
 Here is the built-in properties of task:

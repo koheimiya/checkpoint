@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "taskproc"
-version = "0.11.2"
+version = "0.11.3"
 description = "A lightweight task processing library written in pure Python"
 authors = ["Kohei Miyaguchi <koheimiyaguchi@gmail.com>"]
 license = "MIT License"
@@ -8,6 +8,9 @@ homepage = "https://github.com/koheimiya/taskproc"
 repository = "https://github.com/koheimiya/taskproc"
 readme = "README.md"
 packages = [{include = "taskproc"}]
+
+[tool.poetry.scripts]
+taskproc = "taskproc.app:main"
 
 [tool.poetry.dependencies]
 python = "^3.10"

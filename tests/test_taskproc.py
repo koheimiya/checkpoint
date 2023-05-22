@@ -222,14 +222,14 @@ def test_mapping():
 
 
 @infer_task_type
-class PrefixedJob(TaskBase, job_prefix=['bash', 'tests/run_with_hello.bash']):
+class PrefixedJob(TaskBase, prefix_command='bash tests/run_with_hello.bash'):
     def run_task(self) -> None:
         print('world')
         return
     ...
 
 
-def test_job_prefix(capsys):
+def test_prefix_command(capsys):
     PrefixedJob.clear_all_tasks()
     task = PrefixedJob()
     task.run_graph(executor=ThreadPoolExecutor(max_workers=1))
