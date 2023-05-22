@@ -143,12 +143,13 @@ class TaskWorker(Generic[R]):
                         stderr=subprocess.PIPE,
                         shell=True,
                         bufsize=1,
+                        text=True,
                         )
                 assert process.stdout is not None
                 assert process.stderr is not None
                 while process.poll() is None:
-                    print(process.stdout.read().decode(), end='')
-                    print(process.stderr.read().decode(), end='', file=sys.stderr)
+                    print(process.stdout.read(), end='')
+                    print(process.stderr.read(), end='', file=sys.stderr)
                 if process.returncode != 0:
                     raise RuntimeError(process.returncode)
 
