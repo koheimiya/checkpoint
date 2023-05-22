@@ -148,8 +148,8 @@ class TaskWorker(Generic[R]):
                 assert process.stdout is not None
                 assert process.stderr is not None
                 while process.poll() is None:
-                    print(process.stdout.read(), end='')
-                    print(process.stderr.read(), end='', file=sys.stderr)
+                    print(process.stdout.read(), end='', flush=True)
+                    print(process.stderr.read(), end='', flush=True, file=sys.stderr)
                 if process.returncode != 0:
                     raise RuntimeError(process.returncode)
 
