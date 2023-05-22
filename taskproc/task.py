@@ -216,7 +216,12 @@ class TaskWorker(Generic[R]):
         return out
 
     def get_result(self) -> R:
-        return self.config.db.load(self.arg_key)
+        result_key = '_task__result_'
+        res = getattr(self.instance, result_key, None)
+        if res is None:
+            res = self.config.db.load(self.arg_key)
+            setattr(self.instance, result_key, res)
+        return res
 
     def clear(self) -> None:
         db = self.config.db
