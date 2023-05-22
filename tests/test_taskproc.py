@@ -136,8 +136,8 @@ class GreetWithFile(TaskBase):
 def test_requires_directory():
     CreateFile.clear_all_tasks()
     GreetWithFile.clear_all_tasks()
-    taskdir_world = CreateFile('Hello, world!')._task_worker._directory_uninit
-    taskdir_me = CreateFile('Hello, me!')._task_worker._directory_uninit
+    taskdir_world = CreateFile('Hello, world!')._task_worker._data_directory_uninit
+    taskdir_me = CreateFile('Hello, me!')._task_worker._data_directory_uninit
 
     def check_output(name: str):
         assert GreetWithFile(name).run_graph() == f'Hello, {name}!'

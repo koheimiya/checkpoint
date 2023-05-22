@@ -110,8 +110,8 @@ class TaskWorker(Generic[R]):
 
     def set_result(self) -> None:
         db = self.config.db
-        if self.directory.exists():
-            shutil.rmtree(self.directory)
+        if self.data_directory.exists():
+            shutil.rmtree(self.data_directory)
         out = self.run_instance_task()
         db.save(self.arg_key, out)
 
@@ -120,7 +120,12 @@ class TaskWorker(Generic[R]):
         if job_prefix is None:
             return self._run_task_with_captured_output()
         else:
-            with tempfile.TemporaryDirectory() as dir_ref:
+            # with tempfile.TemporaryDirectory() as dir_ref:
+            dir_ref = self.directory / 'tmp'
+            if dir_ref.exists():
+                shutil.rmtree(dir_ref)
+            dir_ref.mkdir()
+            try:
                 worker_path = Path(dir_ref) / 'worker.pkl'
                 result_path = Path(dir_ref) / 'result.pkl'
                 pycmd = f"""import gzip, cloudpickle
@@ -139,6 +144,8 @@ class TaskWorker(Generic[R]):
                 res.check_returncode()
                 with gzip.open(result_path, 'rb') as result_ref:
                     return cloudpickle.load(result_ref)
+            finally:
+                shutil.rmtree(dir_ref)
 
     def _run_task_with_captured_output(self) -> R:
         if not self.config.detach_output:
@@ -182,13 +189,18 @@ class TaskWorker(Generic[R]):
         return self.config.db.get_stderr_path(self.arg_key)
 
     @property
-    def _directory_uninit(self) -> Path:
+    def directory(self) -> Path:
+        _, arg_str = self.to_tuple()
+        return self.config.db.get_result_dir(arg_str)
+
+    @property
+    def _data_directory_uninit(self) -> Path:
         _, arg_str = self.to_tuple()
         return self.config.db.get_data_dir(arg_str)
 
     @property
-    def directory(self) -> Path:
-        out = self._directory_uninit
+    def data_directory(self) -> Path:
+        out = self._data_directory_uninit
         out.mkdir(exist_ok=True)
         return out
 
@@ -201,7 +213,7 @@ class TaskWorker(Generic[R]):
             db.delete(self.arg_key)
         except KeyError:
             pass
-        directory = self._directory_uninit
+        directory = self._data_directory_uninit
         if directory.exists():
             shutil.rmtree(directory)
 
@@ -257,7 +269,7 @@ class TaskType(Generic[P, R], ABC):
 
     @property
     def task_directory(self) -> Path:
-        return self._task_worker.directory
+        return self._task_worker.data_directory
 
     @property
     def task_id(self) -> int:
