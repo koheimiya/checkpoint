@@ -25,6 +25,9 @@ async def _run_shell_command(command: str) -> int:
 
 
 async def transcript(reader: asyncio.StreamReader, channel: Literal['stdout', 'stderr']):
-    chan = sys.stdout if channel == 'stdout' else sys.stderr
-    async for line in reader:
-        print(line.decode(), end='', flush=True, file=chan)
+    if channel == 'stdout':
+        async for line in reader:
+            print(line.decode(), end='', flush=True)
+    else:
+        async for line in reader:
+            print(line.decode(), end='', flush=True, file=sys.stderr)

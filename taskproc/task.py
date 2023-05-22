@@ -121,7 +121,6 @@ class TaskWorker(Generic[R]):
         if prefix_command is None:
             return self.instance.run_task()
         else:
-            # with tempfile.TemporaryDirectory() as dir_ref:
             dir_ref = self.directory / 'tmp'
             if dir_ref.exists():
                 shutil.rmtree(dir_ref)
