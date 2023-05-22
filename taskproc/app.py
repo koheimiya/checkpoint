@@ -6,6 +6,7 @@ import json
 import pprint
 import logging
 import io
+import os
 
 import click
 
@@ -48,6 +49,11 @@ def main(taskfile: Path,
     # Run script as module
     module_name = taskfile.with_suffix('').name
     sys.path.append(str(taskfile.parent))
+    pp = os.getenv('PYTHONPATH')
+    if pp is not None:
+        os.environ['PYTHONPATH'] = ':'.join([str(taskfile.parent), pp])
+    else:
+        os.environ['PYTHONPATH'] = str(taskfile.parent)
     module = __import__(module_name)
 
     # Run the main task
