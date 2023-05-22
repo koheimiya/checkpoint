@@ -70,12 +70,18 @@ def main(taskfile: Path,
     # pprint.pprint(stats['stats'], sort_dicts=False, stream=buf)
     # for line in buf.getvalue().splitlines():
     #     LOGGER.info(line)
-    print('==== STDOUT ====')
-    for line in open(entrypoint_task.task_stdout).readlines():
-        print(line, end='')
-    print('==== STDERR ====')
-    for line in open(entrypoint_task.task_stderr).readlines():
-        print(line, end='')
+    if entrypoint_task.task_stdout.exists():
+        print('==== STDOUT ====')
+        for line in open(entrypoint_task.task_stdout).readlines():
+            print(line, end='')
+    else:
+        print('==== NO STDOUT ====')
+    if entrypoint_task.task_stderr.exists():
+        print('==== STDERR ====')
+        for line in open(entrypoint_task.task_stderr).readlines():
+            print(line, end='')
+    else:
+        print('==== NO STDERR ====')
     return 0
 
 
