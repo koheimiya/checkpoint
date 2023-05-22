@@ -132,7 +132,7 @@ class TaskWorker(Generic[R]):
                     cloudpickle.dump(self, worker_ref)
                 res = subprocess.run(
                         ' '.join([*job_prefix, sys.executable, '-c', repr(pycmd)]),
-                        capture_output=True, check=True, shell=True,
+                        capture_output=True, shell=True,
                         )
                 print(res.stdout.decode(), end='')
                 print(res.stderr.decode(), end='', file=sys.stderr)
