@@ -137,13 +137,21 @@ class TaskWorker(Generic[R]):
                 """.replace('\n', ';')
                 with gzip.open(worker_path, 'wb') as worker_ref:
                     cloudpickle.dump(self, worker_ref)
-                res = subprocess.run(
+                process = subprocess.Popen(
                         ' '.join([*job_prefix, sys.executable, '-c', repr(pycmd)]),
-                        capture_output=True, shell=True,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        shell=True,
+                        bufsize=1,
                         )
-                print(res.stdout.decode(), end='')
-                print(res.stderr.decode(), end='', file=sys.stderr)
-                res.check_returncode()
+                assert process.stdout is not None
+                assert process.stderr is not None
+                while process.poll() is None:
+                    print(process.stdout.read().decode(), end='')
+                    print(process.stderr.read().decode(), end='', file=sys.stderr)
+                if process.returncode != 0:
+                    raise RuntimeError(process.returncode)
+
                 with gzip.open(result_path, 'rb') as result_ref:
                     return cloudpickle.load(result_ref)
             finally:
