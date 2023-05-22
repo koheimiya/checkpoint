@@ -112,13 +112,15 @@ class TaskWorker(Generic[R]):
         db = self.config.db
         if self.data_directory.exists():
             shutil.rmtree(self.data_directory)
-        out = self.run_instance_task()
+
+        out = self._run_instance_task_with_captured_output()
+
         db.save(self.arg_key, out)
 
     def run_instance_task(self) -> R:
         job_prefix = self.config.job_prefix
         if job_prefix is None:
-            return self._run_task_with_captured_output()
+            return self.instance.run_task()
         else:
             # with tempfile.TemporaryDirectory() as dir_ref:
             dir_ref = self.directory / 'tmp'
@@ -130,7 +132,7 @@ class TaskWorker(Generic[R]):
                 result_path = Path(dir_ref) / 'result.pkl'
                 pycmd = f"""import gzip, cloudpickle
                     worker = cloudpickle.load(gzip.open("{worker_path}", "rb"))
-                    res = worker._run_task_with_captured_output()
+                    res = worker.instance.run_task()
                     cloudpickle.dump(res, gzip.open("{result_path}", "wb"))
                 """.replace('\n', ';')
                 with gzip.open(worker_path, 'wb') as worker_ref:
@@ -147,23 +149,23 @@ class TaskWorker(Generic[R]):
             finally:
                 shutil.rmtree(dir_ref)
 
-    def _run_task_with_captured_output(self) -> R:
+    def _run_instance_task_with_captured_output(self) -> R:
         if not self.config.detach_output:
-            return self.instance.run_task()
+            return self.run_instance_task()
 
         try:
             with open(self.stdout_path, 'w+') as stdout:
                 with open(self.stderr_path, 'w+') as stderr:
                     with redirect_stdout(stdout):
                         with redirect_stderr(stderr):
-                            return self.instance.run_task()
+                            return self.run_instance_task()
         except:
             task_info = {
                     'name': self.config.name,
                     'id': self.task_id,
                     'args': self.task_args,
                     }
-            LOGGER.error(f'Error occurred while running task {task_info}')
+            LOGGER.error(f'Error occurred while running detached task {task_info}')
             LOGGER.error(f'Here is the stdout ({self.stdout_path}):')
             for line in open(self.stdout_path).readlines():
                 LOGGER.error(line)

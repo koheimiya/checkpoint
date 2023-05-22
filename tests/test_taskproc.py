@@ -234,7 +234,7 @@ def test_job_prefix(capsys):
     task = PrefixedJob()
     task.run_graph(executor=ThreadPoolExecutor(max_workers=1))
     captured = capsys.readouterr()
-    assert captured.out == 'hello\n'
+    assert captured.out == ''
     assert captured.err == ''
 
-    assert open(task.task_stdout, 'r').read() == 'world\n'
+    assert open(task.task_stdout, 'r').read() == 'hello\nworld\n'
