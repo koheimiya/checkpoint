@@ -13,10 +13,10 @@ import logging
 import inspect
 import json
 import shutil
-import subprocess
 import cloudpickle
 import gzip
 import sys
+from .subprocess import run_shell_command
 
 
 from .types import Json, TaskKey, Context
@@ -134,23 +134,14 @@ class TaskWorker(Generic[R]):
                     res = worker.instance.run_task()
                     cloudpickle.dump(res, gzip.open("{result_path}", "wb"))
                 """.replace('\n', ';')
+                shell_command = ' '.join([prefix_command, sys.executable, '-c', repr(pycmd)])
+
                 with gzip.open(worker_path, 'wb') as worker_ref:
                     cloudpickle.dump(self, worker_ref)
-                process = subprocess.Popen(
-                        ' '.join([prefix_command, sys.executable, '-c', repr(pycmd)]),
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.PIPE,
-                        shell=True,
-                        bufsize=1,
-                        text=True,
-                        )
-                assert process.stdout is not None
-                assert process.stderr is not None
-                while process.poll() is None:
-                    print(process.stdout.read(), end='', flush=True)
-                    print(process.stderr.read(), end='', flush=True, file=sys.stderr)
-                if process.returncode != 0:
-                    raise RuntimeError(process.returncode)
+
+                returncode = run_shell_command(shell_command)
+                if returncode != 0:
+                    raise RuntimeError(returncode)
 
                 with gzip.open(result_path, 'rb') as result_ref:
                     return cloudpickle.load(result_ref)
@@ -175,13 +166,12 @@ class TaskWorker(Generic[R]):
                     'args': self.task_args,
                     }
             LOGGER.error(f'Error occurred while running detached task {task_info}')
-            if self.config.detach_output:
-                LOGGER.error(f'Here is the detached stdout ({self.stdout_path}):')
-                for line in open(self.stdout_path).readlines():
-                    LOGGER.error(line)
-                LOGGER.error(f'Here is the detached stderr ({self.stderr_path}):')
-                for line in open(self.stderr_path).readlines():
-                    LOGGER.error(line)
+            LOGGER.error(f'Here is the detached stdout ({self.stdout_path}):')
+            for line in open(self.stdout_path).readlines():
+                LOGGER.error(line)
+            LOGGER.error(f'Here is the detached stderr ({self.stderr_path}):')
+            for line in open(self.stderr_path).readlines():
+                LOGGER.error(line)
             raise
         raise NotImplementedError('Should not happen')
 
