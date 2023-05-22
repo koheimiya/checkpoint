@@ -5,4 +5,5 @@ from taskproc import infer_task_type, TaskBase
 class Main(TaskBase):
     """ Example task """
     def run_task(self) -> None:
-        raise NotImplementedError('Implement here')
+        print('Hi there')
+        # raise NotImplementedError('Implement here')

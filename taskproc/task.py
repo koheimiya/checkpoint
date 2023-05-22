@@ -44,7 +44,7 @@ class TaskConfig(Generic[P, R]):
             channels: tuple[str, ...],
             compress_level: int,
             job_prefix: list[str] | None,
-            capture_output: bool,
+            detach_output: bool,
             ) -> None:
 
         self.task_class = task_class
@@ -52,7 +52,7 @@ class TaskConfig(Generic[P, R]):
         self.db = Database.make(name=self.name, compress_level=compress_level)
         self.channels = (self.name,) + channels
         self.job_prefix = job_prefix
-        self.capture_output = capture_output
+        self.detach_output = detach_output
         self.worker_registry: dict[Json, TaskWorker[R]] = {}
 
         source = inspect.getsource(task_class)
@@ -131,8 +131,8 @@ class TaskWorker(Generic[R]):
                 with gzip.open(worker_path, 'wb') as worker_ref:
                     cloudpickle.dump(self, worker_ref)
                 res = subprocess.run(
-                        [*job_prefix, sys.executable, '-c', pycmd],
-                        capture_output=True,
+                        ' '.join([*job_prefix, sys.executable, '-c', repr(pycmd)]),
+                        capture_output=True, check=True, shell=True,
                         )
                 print(res.stdout.decode(), end='')
                 print(res.stderr.decode(), end='', file=sys.stderr)
@@ -141,7 +141,7 @@ class TaskWorker(Generic[R]):
                     return cloudpickle.load(result_ref)
 
     def _run_task_with_captured_output(self) -> R:
-        if not self.config.capture_output:
+        if not self.config.detach_output:
             return self.instance.run_task()
 
         try:
@@ -232,7 +232,7 @@ class TaskType(Generic[P, R], ABC):
 
         compress_level = kwargs.pop('compress_level', 9)
         job_prefix = kwargs.pop('job_prefix', None)
-        capture_output = kwargs.pop('capture_output', True)
+        detach_output = kwargs.pop('detach_output', True)
 
         # Fill missing requirement
         ann = inspect.get_annotations(cls, eval_str=True)
@@ -242,7 +242,7 @@ class TaskType(Generic[P, R], ABC):
                 req.__set_name__(None, k)
                 setattr(cls, k, req)
 
-        cls._task_config = TaskConfig(task_class=cls, channels=channels, compress_level=compress_level, job_prefix=job_prefix, capture_output=capture_output)
+        cls._task_config = TaskConfig(task_class=cls, channels=channels, compress_level=compress_level, job_prefix=job_prefix, detach_output=detach_output)
         super().__init_subclass__(**kwargs)
 
     def __init__(self, *args: P.args, **kwargs: P.kwargs) -> None:
