@@ -25,24 +25,20 @@ pip install taskproc
 ### Basic usage
 
 Workflow is a directed acyclic graph (DAG) of tasks, and task is a unit of work represented with a class.
-Here is an example.
+Each task and its upstream dependencies are specified with a class definition:
 ```python
-from taskproc import TaskBase, Req, Requires, Const
+from taskproc import TaskBase, Requires, Const
 
-# Define a task and **its entire upstream workflow** with a class definition.
-# Inheriting `TaskBase` is necesary, as it takes care of all the work storing and reusing the result and tracking the dependencies.
-# `infer_task_type` decorator helps the type checker to infer the types of the task class. (optional)
-@infer_task_type
 class Choose(TaskBase):
     """ Compute the binomial coefficient. """
-    # Inside a task, we first declare the values that must be computed upstream with the descriptor `Req`.
+    # Inside a task, we first declare the values that must be computed in upstream.
     # In this example, `Choose(n, k)` depends on `Choose(n - 1, k - 1)` and `Choose(n - 1, k)`,
     # so it requires two `int` values.
     prev1: Requires[int]
     prev2: Requires[int]
 
     def build_task(self, n: int, k: int):
-        # The prerequisite tasks and the other instance attributes are prepared here.
+        # The upstream tasks and the other instance attributes are prepared here.
         # It thus recursively defines all the tasks we need to run this task,
         # i.e., the entire upstream workflow.
 
@@ -63,7 +59,7 @@ class Choose(TaskBase):
         # The return values of the prerequisite tasks are accessible via the descriptors:
         return self.prev1 + self.prev2
 
-# To run the task as well as upstream workflow, use the `run_graph()` method.
+# To run the task as well as the upstreams, use the `run_graph()` method.
 ans = Choose(6, 3).run_graph()  # `ans` should be 6 Choose 3, which is 20.
 
 # It greedily executes all the necessary tasks as parallel as possible
@@ -91,7 +87,7 @@ Choose.clear_all_tasks()
 
 ### Task IO
 
-The arguments of the `build_task` method can be anything JSON serializable including `Task`s:
+The arguments of the `build_task` method can be anything JSON serializable + `Task`s:
 ```python
 class MyTask(TaskBase):
     def build_task(self, param1, param2):
@@ -107,62 +103,23 @@ MyTask(
 }).run_graph()
 ```
 
-<!--
-Otherwise they can be passed via `Task` and `Req`:
+List/dict of upstream tasks can be registered with `RequiresList` and `RequiresDict`:
 ```python
-from taskproc import Task
-Dataset = ...  # Some complex data structure
-Model = ...    # Some complex data structure
-
-class LoadDataset(TaskBase):
-    def build_task(self):
-        pass
-
-    def run_task(self) -> Dataset:
-        ...
-
-class TrainModel(TaskBase):
-    dataset: Requires[Datset]
-
-    def build_task(self, dataset_task: Task[Dataset]):
-        self.dataset = dataset_task
-
-    def run_task(self) -> Model:
-        ...
-    
-class ScoreModel(TaskBase):
-    dataset: Requires[Datset]
-    model: Requires[Model]
-
-    def build_task(self, dataset_task: Task[Dataset], model_task: Task[Model]):
-        self.dataset = dataset_task
-        self.model = model_task
-
-    def run_task(self) -> float:
-        ...
-
-
-dataset_task = LoadDataset()
-model_task = TrainModel(dataset)
-score_task = ScoreModel(dataset, model)
-print(score_task.run_graph()
-```
-
-`Req` accepts a list/dict of tasks and automatically unfolds it.
-```python
-from taskproc import RequiresDict
-
+from taskproc import RequiresList, RequiresDict
 
 class SummarizeScores(TaskBase):
-    scores: RequiresDict[str, float] = Req()  # Again, type annotation or assignment may be omitted.
+    score_list: RequiresList[float]
+    score_dict: RequiresDict[str, float]
 
     def build_task(self, task_dict: dict[str, Task[float]]):
-        self.scores = task_dict
+        self.score_list = [MyScore(i) for i in range(10)]
+        self.score_dict = task_dict
 
     def run_task(self) -> float:
-        return sum(self.scores.values()) / len(self.scores)  # We have access to the dict of the results.
+        # At runtime `self.score_list` and `self.score_dict` are evaluated as
+        # `list[float]` and `dict[str, float]`, respectively.
+        return sum(self.score_dict.values()) / len(self.score_dict)
 ```
--->
 
 The output of the `run_task` method should be serializable with `cloudpickle`,
 which is then compressed with `gzip`.
@@ -187,10 +144,10 @@ class DownstreamTask(TaskBase):
 
 
 ### Job scheduling and prefixes
-To run task on job schedulers, one can add prefix to the call of task.
+Tasks can be run with job schedulers using `prefix_command`, which will be inserted just before each task call.
 ```python
 
-class TaskWithJobScheduler(TaskBase, job_prefix=['jbsub', '-interactive', '-tty', '-queue x86_1h', '-cores 16+1', '-mem 64g']):
+class TaskWithJobScheduler(TaskBase, prefix_command='jbsub -interactive -tty -queue x86_1h -cores 16+1 -mem 64g'):
     ...
 ```
 
