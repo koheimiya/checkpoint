@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from concurrent.futures import Executor
+from functools import cached_property
 import ast
 import logging
 import inspect
@@ -48,15 +49,22 @@ class TaskConfig(Generic[P, R]):
 
         self.task_class = task_class
         self.name = _serialize_function(task_class)
-        self.db = Database.make(name=self.name, compress_level=compress_level)
+        self.compress_level = compress_level
         self.channels = (self.name,) + channels
         self.prefix_command = prefix_command
         self.detach_output = detach_output
         self.worker_registry: dict[Json, TaskWorker[R]] = {}
 
-        source = inspect.getsource(task_class)
+
+    @cached_property
+    def db(self) -> Database:
+        return Database.make(name=self.name, compress_level=self.compress_level)
+
+    @cached_property
+    def source_timestamp(self) -> datetime:
+        source = inspect.getsource(self.task_class)
         formatted_source = ast.unparse(ast.parse(source))
-        self.source_timestamp = self.db.update_source_if_necessary(formatted_source)
+        return self.db.update_source_if_necessary(formatted_source)
 
     def clear_all(self) -> None:
         self.db.clear()
