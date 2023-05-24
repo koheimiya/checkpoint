@@ -42,6 +42,7 @@ def main(taskfile: Path,
          dont_show_progress: bool,
          ) -> int:
     logging.basicConfig(level=getattr(logging, loglevel.upper()))
+    LOGGER.info('Entering main of taskproc.')
 
     Context.executor_name = exec_type
     Context.max_workers = max_workers
@@ -61,6 +62,7 @@ def main(taskfile: Path,
     else:
         os.environ['PYTHONPATH'] = str(taskfile.parent)
     module = __import__(module_name)
+    LOGGER.info(f'Target module {module_name} loaded.')
 
     # Run the main task
     entrypoint_fn = getattr(module, entrypoint)
