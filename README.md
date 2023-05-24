@@ -2,7 +2,6 @@
 
 A lightweight workflow building/execution/management tool written in pure Python.
 Internally, it depends on `DiskCache`, `cloudpickle` `networkx` and `concurrent.futures`.
-
 #### Features
 * Decomposing long and complex computation into tasks, i.e., smaller units of work with dependencies.
 * Executing them in a distributed way, supporting multithreading, multiprocessing and local containers/clusters.
@@ -223,4 +222,5 @@ Here is the built-in properties of task:
 | `task_stderr` | instance | Path to the task's stderr |
 
 ## TODO
+- [ ] Replace `infer_task_type` with dynamic `__init__` override
 - [ ] Task graph visualizer
