@@ -14,9 +14,8 @@ import inspect
 import json
 import shutil
 import cloudpickle
-import gzip
+import subprocess
 import sys
-from .subprocess import run_shell_command
 
 
 from .types import Json, TaskKey, Context
@@ -42,8 +41,8 @@ class TaskConfig(Generic[R]):
             task_class: Type[TaskBase[R]],
             channels: tuple[str, ...],
             compress_level: int,
-            prefix_command: str | None,
-            detach_output: bool,
+            prefix_command: str,
+            local_worker: bool,
             ) -> None:
 
         self.task_class = task_class
@@ -51,7 +50,9 @@ class TaskConfig(Generic[R]):
         self.compress_level = compress_level
         self.channels = (self.name,) + channels
         self.prefix_command = prefix_command
-        self.detach_output = detach_output
+        self.local_worker = local_worker
+        if self.local_worker and self.prefix_command:
+            LOGGER.warning(f'`local_worker` is set True, nullifying the effect of `prefix_command`={self.prefix_command!r}')
         self.worker_registry: dict[Json, TaskWorker[R]] = {}
 
 
@@ -114,19 +115,18 @@ class TaskWorker(Generic[R]):
         except KeyError:
             return None
 
-    def set_result(self) -> None:
-        db = self.config.db
+    def set_result(self, on_child_process: bool = False) -> None:
         if self.data_directory.exists():
             shutil.rmtree(self.data_directory)
+        self.run_and_save_instance_task(on_child_process=on_child_process)
 
-        out = self._run_instance_task_with_captured_output()
-
-        db.save(self.arg_key, out)
-
-    def run_instance_task(self) -> R:
-        prefix_command = self.config.prefix_command
-        if prefix_command is None:
-            return self.instance.run_task()
+    def run_and_save_instance_task(self, on_child_process: bool) -> None:
+        if self.config.local_worker:
+            res = self.instance.run_task()
+            self.config.db.save(self.arg_key, res)
+        elif on_child_process and self.config.prefix_command == '':
+            res = self.run_instance_task_with_captured_output()
+            self.config.db.save(self.arg_key, res)
         else:
             dir_ref = self.directory / 'tmp'
             if dir_ref.exists():
@@ -134,37 +134,33 @@ class TaskWorker(Generic[R]):
             dir_ref.mkdir()
             try:
                 worker_path = Path(dir_ref) / 'worker.pkl'
-                result_path = Path(dir_ref) / 'result.pkl'
-                pycmd = f"""import gzip, cloudpickle
-                    worker = cloudpickle.load(gzip.open("{worker_path}", "rb"))
+                pycmd = f"""import pickle
+                    worker = pickle.load(open("{worker_path}", "rb"))
                     res = worker.instance.run_task()
-                    cloudpickle.dump(res, gzip.open("{result_path}", "wb"))
+                    worker.config.db.save(worker.arg_key, res)
                 """.replace('\n', ';')
-                shell_command = ' '.join([prefix_command, sys.executable, '-c', repr(pycmd)])
 
-                with gzip.open(worker_path, 'wb') as worker_ref:
+                with open(worker_path, 'wb') as worker_ref:
                     cloudpickle.dump(self, worker_ref)
 
-                returncode = run_shell_command(shell_command)
-                if returncode != 0:
-                    raise RuntimeError(returncode)
-
-                with gzip.open(result_path, 'rb') as result_ref:
-                    return cloudpickle.load(result_ref)
+                shell_command = ' '.join([self.config.prefix_command, sys.executable, '-c', repr(pycmd)])
+                subprocess.run(
+                        shell_command,
+                        shell=True, check=True, text=True,
+                        stdout=open(self.stdout_path, 'w+'),
+                        stderr=open(self.stderr_path, 'w+')
+                        )
             finally:
                 shutil.rmtree(dir_ref)
 
-    def _run_instance_task_with_captured_output(self) -> R:
-        if not self.config.detach_output:
-            return self.run_instance_task()
-
+    def run_instance_task_with_captured_output(self) -> R:
         try:
             with ExitStack() as stack:
                 stdout = stack.enter_context(open(self.stdout_path, 'w+'))
                 stderr = stack.enter_context(open(self.stderr_path, 'w+'))
                 stack.enter_context(redirect_stdout(stdout))
                 stack.enter_context(redirect_stderr(stderr))
-                return self.run_instance_task()
+                return self.instance.run_task()
         except:
             task_info = {
                     'name': self.config.name,
@@ -263,8 +259,8 @@ class TaskBase(Generic[R]):
             raise ValueError('Invalid channel value:', _channel)
 
         compress_level = kwargs.pop('compress_level', 9)
-        prefix_command = kwargs.pop('prefix_command', None)
-        detach_output = kwargs.pop('detach_output', True)
+        prefix_command = kwargs.pop('prefix_command', '')
+        local_worker = kwargs.pop('local_worker', False)
 
         # Fill missing requirement
         ann = inspect.get_annotations(cls, eval_str=True)
@@ -279,7 +275,7 @@ class TaskBase(Generic[R]):
                 channels=channels,
                 compress_level=compress_level,
                 prefix_command=prefix_command,
-                detach_output=detach_output
+                local_worker=local_worker,
                 )
 
         # Swap initializer to make __init__ lazy

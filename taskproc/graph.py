@@ -5,7 +5,7 @@ from typing import Any, Sequence
 from typing_extensions import Self, runtime_checkable, Protocol
 from collections import defaultdict
 from dataclasses import dataclass
-from concurrent.futures import Future, wait, FIRST_COMPLETED, Executor
+from concurrent.futures import Future, ProcessPoolExecutor, wait, FIRST_COMPLETED, Executor
 import logging
 
 from tqdm.auto import tqdm
@@ -30,7 +30,7 @@ class TaskHandlerProtocol(Protocol):
     def to_tuple(self) -> TaskKey: ...
     def get_prerequisites(self) -> Sequence[TaskHandlerProtocol]: ...
     def peek_timestamp(self) -> datetime | None: ...
-    def set_result(self) -> None: ...
+    def set_result(self, on_child_process: bool) -> None: ...
 
 
 @dataclass
@@ -175,7 +175,7 @@ def run_task_graph(
                     to_submit = keys
 
                 for key in to_submit:
-                    future = executor.submit(_run_task, queue, cloudpickle.dumps(graph.get_task(key)))
+                    future = executor.submit(_run_task, queue, cloudpickle.dumps(graph.get_task(key)), isinstance(executor, ProcessPoolExecutor))
                     in_process.add(future)
 
             # Wait for the first tasks to complete
@@ -210,8 +210,8 @@ def run_task_graph(
     return info
 
 
-def _run_task(queue: ChannelLabels, task_data: bytes) -> tuple[ChannelLabels, TaskKey]:  # queue, (dbname, key)
+def _run_task(queue: ChannelLabels, task_data: bytes, on_child_process: bool) -> tuple[ChannelLabels, TaskKey]:  # queue, (dbname, key)
     task = cloudpickle.loads(task_data)
     assert isinstance(task, TaskHandlerProtocol)
-    task.set_result()
+    task.set_result(on_child_process=on_child_process)
     return queue, task.to_tuple()

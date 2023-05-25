@@ -32,7 +32,7 @@ def test_graph():
     6...x
     """
     Choose.clear_all_tasks()
-    ans, stats = Choose(6, 3).run_graph_with_stats(rate_limits={Choose.task_name: 2})
+    ans, stats = Choose(6, 3).run_graph_with_stats()
     assert ans == 20
     assert sum(stats['stats'].values()) == 15
 
@@ -92,7 +92,7 @@ def test_multiple_tasks():
     assert TaskC._task_config.db.compress_level == -1
 
 
-class TaskRaise(TaskBase):
+class TaskRaise(TaskBase, local_worker=True):
     def __init__(self): ...
     def run_task(self):
         raise ValueError(42)
@@ -104,7 +104,6 @@ def test_raise():
 
 
 class CreateFile(TaskBase):
-
     def __init__(self, content: str):
         self.content = content
 
