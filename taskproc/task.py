@@ -2,7 +2,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Iterable
 from contextlib import redirect_stderr, redirect_stdout, ExitStack
-from typing import Callable, Generic, Mapping, Protocol, Sequence, Type, TypeVar, Any, cast
+from typing import Callable, Generic, Mapping, MutableSequence, Protocol, Sequence, Type, TypeVar, Any, cast
 from typing_extensions import ParamSpec, Self, get_origin, overload
 from dataclasses import dataclass
 from datetime import datetime
@@ -348,7 +348,11 @@ class TaskType(Generic[P, R], ABC):
     def get_task_result(self) -> R:
         return self._task_worker.get_result()
 
-    def __getitem__(self: TaskType[..., Mapping[K, T]], key: K) -> _MappedTask[K, T]:
+    @overload
+    def __getitem__(self: TaskType[..., Sequence[T]], key: int) -> _MappedTask[T]: ...
+    @overload
+    def __getitem__(self: TaskType[..., Mapping[K, T]], key: K) -> _MappedTask[T]: ...
+    def __getitem__(self: TaskType[..., Mapping[K, T] | Sequence[T]], key: int | K) -> _MappedTask[T]:
         return _MappedTask(self, key)
 
 
@@ -392,9 +396,9 @@ class CustomJSONEncoder(json.JSONEncoder):
 
 
 @dataclass
-class _MappedTask(Generic[K, T]):
-    task: TaskType[..., Mapping[K, T]] | _MappedTask[Any, Mapping[K, T]]
-    key: K
+class _MappedTask(Generic[R]):
+    task: TaskType[..., Mapping[Any, R] | Sequence[R]] | _MappedTask[Mapping[Any, R] | Sequence[R]]
+    key: Any
 
     def get_origin(self) -> TaskType[..., Any]:
         x = self.task
@@ -411,11 +415,18 @@ class _MappedTask(Generic[K, T]):
             x = x.task
         return out[::-1]
 
-    def get_task_result(self) -> T:
+    def get_task_result(self) -> R:
         out = self.get_origin().get_task_result()
         for k in self.get_args():
             out = out[k]
         return out
+
+    @overload
+    def __getitem__(self: _MappedTask[Sequence[T]], key: int) -> _MappedTask[T]: ...
+    @overload
+    def __getitem__(self: _MappedTask[Mapping[K, T]], key: K) -> _MappedTask[T]: ...
+    def __getitem__(self: _MappedTask[Mapping[K, T] | Sequence[T]], key: int | K) -> _MappedTask[T]:
+        return _MappedTask(self, key)
 
 
 class Req(Generic[T, R]):
@@ -475,7 +486,7 @@ class Const(Generic[R]):
         return self.value
 
 
-Task = TaskType[..., R] | _MappedTask[Any, R]
+Task = TaskType[..., R] | _MappedTask[R]
 TaskLike = Task[R] | Const[R]
 
 

@@ -200,8 +200,8 @@ class MultiResultTask(TaskBase):
     def build_task(self) -> None:
         pass
 
-    def run_task(self) -> dict[str, str]:
-        return {'hello': 'world'}
+    def run_task(self) -> dict[str, list[str]]:
+        return {'hello': ['world', '42']}
 
 
 @infer_task_type
@@ -209,7 +209,7 @@ class DownstreamTask(TaskBase):
     up: Requires[str]
 
     def build_task(self) -> None:
-        self.up = MultiResultTask()['hello']
+        self.up = MultiResultTask()['hello'][1]
 
     def run_task(self) -> str:
         return self.up
@@ -218,7 +218,7 @@ class DownstreamTask(TaskBase):
 def test_mapping():
     MultiResultTask.clear_all_tasks()
     DownstreamTask.clear_all_tasks()
-    assert DownstreamTask().run_graph() == 'world'
+    assert DownstreamTask().run_graph() == '42'
 
 
 @infer_task_type
