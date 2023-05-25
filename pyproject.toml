@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "taskproc"
-version = "0.11.4"
+version = "0.12.0"
 description = "A lightweight task processing library written in pure Python"
 authors = ["Kohei Miyaguchi <koheimiyaguchi@gmail.com>"]
 license = "MIT License"

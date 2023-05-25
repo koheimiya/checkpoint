@@ -36,7 +36,7 @@ class Choose(TaskBase):
     prev1: Requires[int]
     prev2: Requires[int]
 
-    def build_task(self, n: int, k: int):
+    def __init__(self, n: int, k: int):
         # The upstream tasks and the other instance attributes are prepared here.
         # It thus recursively defines all the tasks we need to run this task,
         # i.e., the entire upstream workflow.
@@ -64,7 +64,7 @@ ans = Choose(6, 3).run_graph()  # `ans` should be 6 Choose 3, which is 20.
 # It greedily executes all the necessary tasks as parallel as possible
 # and then spits out the return value of the task on which we call `run_graph()`.
 # The return values of the intermediate tasks are cached at
-# `{$CP_CACHE_DIR:-./.cache}/taskproc/{module_name}.{task_name}/results/...`
+# `{$TP_CACHE_DIR:-./.cache}/taskproc/{module_name}.{task_name}/results/...`
 # and reused on the fly whenever possible.
 ```
 
@@ -80,16 +80,16 @@ Choose(3, 3).clear_task()
 ans = Choose(6, 3).run_graph()
 
 # Delete all the cache associated with `Choose`,
-# equivalent to `rm -r {$CP_CACHE_DIR:-./.cache}/taskproc/{module_name}.Choose`.
+# equivalent to `rm -r {$TP_CACHE_DIR:-./.cache}/taskproc/{module_name}.Choose`.
 Choose.clear_all_tasks()            
 ```
 
 ### Task IO
 
-The arguments of the `build_task` method can be anything JSON serializable + `Task`s:
+The arguments of the `__init__` method can be anything JSON serializable + `Task`s:
 ```python
 class MyTask(TaskBase):
-    def build_task(self, param1, param2):
+    def __init__(self, param1, param2):
         ...
 
 MyTask(
@@ -110,7 +110,7 @@ class SummarizeScores(TaskBase):
     score_list: RequiresList[float]
     score_dict: RequiresDict[str, float]
 
-    def build_task(self, task_dict: dict[str, Task[float]]):
+    def __init__(self, task_dict: dict[str, Task[float]]):
         self.score_list = [MyScore(i) for i in range(10)]
         self.score_dict = task_dict
 
@@ -137,7 +137,7 @@ class MultiOutputTask(TaskBase):
 class DownstreamTask(TaskBase):
     dep: Requires[int]
 
-    def build_task(self):
+    def __init__(self):
         self.dep = MultiOutputTask()['foo']
 ```
 
@@ -154,7 +154,7 @@ class TaskWithJobScheduler(TaskBase, prefix_command='jbsub -interactive -tty -qu
 
 Use `task.task_directory` to get a fresh path dedicated to each task.
 The directory is automatically created at
-`{$CP_CACHE_DIR:-./.cache}/taskproc/{module_name}.{task_name}/data/{task_id}`
+`{$TP_CACHE_DIR:-./.cache}/taskproc/{module_name}.{task_name}/data/{task_id}`
 and the contents of the directory are cleared at each task call and persist until the task is cleared.
 ```python
 class TrainModel(TaskBase):
@@ -210,17 +210,22 @@ The command runs the `Main()` task and stores the cache right next to `taskfile.
 Please refer to `taskproc --help` for more info.
 
 ### Built-in properties
-Here is the built-in properties of task:
+Here is the list of the built-in properties/methods of `TaskBase`:
 
-| Property | Owner | Description |
+| Name | Type | Description |
 |--|--|--|
-| `task_name`   | class    | String id of the task class |
-| `task_id`     | instance | Integer id of the task, unique within the same task class  |
-| `task_args`   | instance | The arguments of the task in JSON |
-| `task_directory` | instance | Path to the data directory of the task |
-| `task_stdout` | instance | Path to the task's stdout |
-| `task_stderr` | instance | Path to the task's stderr |
+| `task_name`   | class property   | String id of the task class |
+| `task_id`     | instance property | Integer id of the task, unique within the same task class  |
+| `task_args`   | instance property | The arguments of the task in JSON |
+| `task_directory` | instance property | Path to the data directory of the task |
+| `task_stdout` | instance property | Path to the task's stdout |
+| `task_stderr` | instance property | Path to the task's stderr |
+| `run_task`    | instance method   | Run the task |
+| `run_graph`    | instance method   | Run the task after necessary upstream tasks and save the results in the cache |
+| `run_graph_with_stats`    | instance method   | `run_graph` with additional statistics |
+| `get_task_result`    | instance method   | Directly get the result of the task (fails if the cache is missing) |
+| `clear_task`    | instance method   | Clear the cache of the task instance |
+| `clear_all_tasks`    | class method   | Clear the cache of the task class |
 
 ## TODO
-- [ ] Replace `infer_task_type` with dynamic `__init__` override
 - [ ] Task graph visualizer

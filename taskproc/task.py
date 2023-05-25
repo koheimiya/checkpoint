@@ -1,14 +1,13 @@
 from __future__ import annotations
-from abc import ABC, abstractmethod
 from collections.abc import Iterable
 from contextlib import redirect_stderr, redirect_stdout, ExitStack
-from typing import Callable, Generic, Mapping, MutableSequence, Protocol, Sequence, Type, TypeVar, Any, cast
+from typing import Callable, Generic, Mapping, Protocol, Sequence, Type, TypeVar, Any, cast
 from typing_extensions import ParamSpec, Self, get_origin, overload
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from concurrent.futures import Executor
-from functools import cached_property
+from functools import cached_property, wraps
 import ast
 import logging
 import inspect
@@ -36,11 +35,11 @@ P = ParamSpec('P')
 R = TypeVar('R', covariant=True)
 
 
-class TaskConfig(Generic[P, R]):
+class TaskConfig(Generic[R]):
     """ Information specific to a task class (not instance) """
     def __init__(
             self,
-            task_class: Type[TaskType[P, R]],
+            task_class: Type[TaskBase[R]],
             channels: tuple[str, ...],
             compress_level: int,
             prefix_command: str | None,
@@ -72,18 +71,18 @@ class TaskConfig(Generic[P, R]):
 
 class TaskWorker(Generic[R]):
     @classmethod
-    def make(cls, config: TaskConfig[P, R], instance: TaskType[P, R], *args: P.args, **kwargs: P.kwargs) -> Self:
-        arg_key = _serialize_arguments(instance.build_task, *args, **kwargs)
+    def make(cls, config: TaskConfig[R], instance: TaskBase[R], *args: Any, **kwargs: Any) -> Self:
+        arg_key = _serialize_arguments(instance._build_task, *args, **kwargs)
         worker = config.worker_registry.get(arg_key, None)
         if worker is not None:
             return worker
 
-        instance.build_task(*args, **kwargs)
+        instance._build_task(*args, **kwargs)
         worker = TaskWorker[R](config=config, instance=instance, arg_key=arg_key)
         config.worker_registry[arg_key] = worker
         return worker
 
-    def __init__(self, config: TaskConfig[..., R], instance: TaskType[..., R], arg_key: Json) -> None:
+    def __init__(self, config: TaskConfig[R], instance: TaskBase[R], arg_key: Json) -> None:
         self.config = config
         self.instance = instance
         self.arg_key = arg_key
@@ -233,16 +232,22 @@ class TaskWorker(Generic[R]):
             shutil.rmtree(directory)
 
 
-class TaskType(Generic[P, R], ABC):
-    _task_config: TaskConfig[P, R]
+class TaskBase(Generic[R]):
+    _task_config: TaskConfig[R]
 
-    @abstractmethod
-    def build_task(self, *args: P.args, **kwargs: P.kwargs) -> None:
-        pass
+    def __init__(self) -> None:
+        ...
 
-    @abstractmethod
+    def __task_init__(self, *args: Any, **kwargs: Any) -> None:
+        self._task_worker: TaskWorker[R] = TaskWorker.make(
+                self._task_config, self, *args, **kwargs
+                )
+
+    def _build_task(self, *args: Any, **kwargs: Any) -> None:
+        ...
+
     def run_task(self) -> R:
-        pass
+        ...
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
         _channel = kwargs.pop('channel', None)
@@ -269,13 +274,18 @@ class TaskType(Generic[P, R], ABC):
                 req.__set_name__(None, k)
                 setattr(cls, k, req)
 
-        cls._task_config = TaskConfig(task_class=cls, channels=channels, compress_level=compress_level, prefix_command=prefix_command, detach_output=detach_output)
-        super().__init_subclass__(**kwargs)
-
-    def __init__(self, *args: P.args, **kwargs: P.kwargs) -> None:
-        self._task_worker: TaskWorker[R] = TaskWorker.make(
-                self._task_config, self, *args, **kwargs
+        cls._task_config = TaskConfig(
+                task_class=cls,
+                channels=channels,
+                compress_level=compress_level,
+                prefix_command=prefix_command,
+                detach_output=detach_output
                 )
+
+        # Swap initializer
+        cls._build_task = cls.__init__  # type: ignore
+        cls.__init__ = wraps(cls._build_task)(cls.__task_init__)
+        super().__init_subclass__(**kwargs)
 
     @classmethod
     @property
@@ -349,21 +359,20 @@ class TaskType(Generic[P, R], ABC):
         return self._task_worker.get_result()
 
     @overload
-    def __getitem__(self: TaskType[..., Sequence[T]], key: int) -> _MappedTask[T]: ...
+    def __getitem__(self: TaskClassProtocol[Sequence[T]], key: int) -> _MappedTask[T]: ...
     @overload
-    def __getitem__(self: TaskType[..., Mapping[K, T]], key: K) -> _MappedTask[T]: ...
-    def __getitem__(self: TaskType[..., Mapping[K, T] | Sequence[T]], key: int | K) -> _MappedTask[T]:
+    def __getitem__(self: TaskClassProtocol[Mapping[K, T]], key: K) -> _MappedTask[T]: ...
+    def __getitem__(self: TaskClassProtocol[Mapping[K, T] | Sequence[T]], key: int | K) -> _MappedTask[T]:
         return _MappedTask(self, key)
 
 
-class TaskClassProtocol(Protocol[P, R]):
-    def build_task(self, *args: P.args, **kwargs: P.kwargs) -> None: ...
+class TaskClassProtocol(Protocol[R]):
+    def __task_init__(self, *args: Any, **kwargs: Any) -> None: ...
     def run_task(self) -> R: ...
 
 
-def infer_task_type(cls: Type[TaskClassProtocol[P, R]]) -> Type[TaskType[P, R]]:
-    assert issubclass(cls, TaskType), f'{cls} must inherit from {TaskType} to infer task type.'
-    return cast(Type[TaskType[P, R]], cls)
+def cast_task(task: TaskClassProtocol[R]) -> TaskBase[R]:
+    return cast(TaskBase[R], task)
 
 
 def _serialize_function(fn: Callable[..., Any]) -> str:
@@ -383,7 +392,7 @@ def _serialize_arguments(fn: Callable[P, Any], *args: P.args, **kwargs: P.kwargs
 
 class CustomJSONEncoder(json.JSONEncoder):
     def default(self, o):
-        if isinstance(o, TaskType):
+        if isinstance(o, TaskBase):
             name, keys = o._task_worker.to_tuple()
             return {'__task__': name, '__args__': json.loads(keys)}
         elif isinstance(o, _MappedTask):
@@ -397,15 +406,15 @@ class CustomJSONEncoder(json.JSONEncoder):
 
 @dataclass
 class _MappedTask(Generic[R]):
-    task: TaskType[..., Mapping[Any, R] | Sequence[R]] | _MappedTask[Mapping[Any, R] | Sequence[R]]
+    task: TaskClassProtocol[Mapping[Any, R] | Sequence[R]] | _MappedTask[Mapping[Any, R] | Sequence[R]]
     key: Any
 
-    def get_origin(self) -> TaskType[..., Any]:
+    def get_origin(self) -> TaskBase[Any]:
         x = self.task
         if isinstance(x, _MappedTask):
             return x.get_origin()
         else:
-            return x
+            return cast_task(x)
 
     def get_args(self) -> list[Any]:
         out = []
@@ -434,19 +443,19 @@ class Req(Generic[T, R]):
         self.public_name = name
         self.private_name = '_requires__' + name
 
-    def __set__(self, obj: TaskType[..., Any], value: T) -> None:
+    def __set__(self, obj: TaskBase[Any], value: T) -> None:
         setattr(obj, self.private_name, value)
 
     @overload
-    def __get__(self: Requires[U], obj: TaskType[..., Any], _=None) -> U: ...
+    def __get__(self: Requires[U], obj: TaskBase[Any], _=None) -> U: ...
     @overload
-    def __get__(self: RequiresList[U], obj: TaskType[..., Any], _=None) -> list[U]: ...
+    def __get__(self: RequiresList[U], obj: TaskBase[Any], _=None) -> list[U]: ...
     @overload
-    def __get__(self: RequiresDict[K, U], obj: TaskType[..., Any], _=None) -> dict[K, U]: ...
-    def __get__(self, obj: TaskType[..., Any], _=None) -> Any:
+    def __get__(self: RequiresDict[K, U], obj: TaskBase[Any], _=None) -> dict[K, U]: ...
+    def __get__(self, obj: TaskBase[Any], _=None) -> Any:
 
-        def get_result(task_like: TaskLike[S]) -> S:
-            if isinstance(task_like, (TaskType, _MappedTask, Const)):
+        def get_result(task_like: Task[S]) -> S:
+            if isinstance(task_like, (TaskBase, _MappedTask, Const)):
                 return task_like.get_task_result()
             else:
                 raise TypeError(f'Unsupported requirement type: {type(task_like)}')
@@ -459,14 +468,14 @@ class Req(Generic[T, R]):
         else:
             return get_result(x)
 
-    def get_task_list(self, obj: TaskType[..., Any]) -> list[TaskType[..., Any]]:
+    def get_task_list(self, obj: TaskBase[Any]) -> list[TaskBase[Any]]:
         x = getattr(obj, self.private_name, None)
         assert x is not None, f'Requirement `{self.public_name}` is not set in {obj}.'
 
         if isinstance(x, _MappedTask):
             x = x.get_origin()
 
-        if isinstance(x, TaskType):
+        if isinstance(x, TaskBase):
             return [x]
         elif isinstance(x, list):
             return x
@@ -486,17 +495,10 @@ class Const(Generic[R]):
         return self.value
 
 
-Task = TaskType[..., R] | _MappedTask[R]
-TaskLike = Task[R] | Const[R]
+RealTask = TaskClassProtocol[R] | _MappedTask[R]
+Task = RealTask[R] | Const[R]
 
 
-Requires = Req[TaskLike[R], R]
-RequiresList = Req[Sequence[TaskLike[R]], list[R]]
-RequiresDict = Req[Mapping[K, TaskLike[R]], dict[K, R]]
-
-
-class TaskBase(TaskType):
-    def build_task(self) -> None:
-        pass
-    def run_task(self) -> None:
-        pass
+Requires = Req[Task[R], R]
+RequiresList = Req[Sequence[Task[R]], list[R]]
+RequiresDict = Req[Mapping[K, Task[R]], dict[K, R]]

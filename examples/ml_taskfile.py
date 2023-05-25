@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import Any, Generic, NewType, Protocol, TypeVar
 
 from cloudpickle import dump, load
-from taskproc import infer_task_type, TaskBase, Task, Requires, RequiresList
+from taskproc import TaskBase, Task, Requires, RequiresList
 
 
 # For demonstration
@@ -27,9 +27,8 @@ class PickleLoader(Generic[T_co]):
         return load(open(self.path, 'rb'))
 
 
-@infer_task_type
 class LoadData(TaskBase):
-    def build_task(self, name: str):
+    def __init__(self, name: str):
         self.name = name
 
     def run_task(self) -> Loader[Data]:
@@ -38,11 +37,10 @@ class LoadData(TaskBase):
         return data_loader
 
 
-@infer_task_type
 class PreprocessData(TaskBase):
     raw_data_loader: Requires[Loader[Data]]
 
-    def build_task(self, name: str, split_ratio: float, seed: int):
+    def __init__(self, name: str, split_ratio: float, seed: int):
         self.name = name
         self.split_ratio = split_ratio
         self.seed = seed
@@ -57,12 +55,11 @@ class PreprocessData(TaskBase):
         return {'train': train_loader, 'valid': valid_loader, 'test': test_loader}
 
 
-@infer_task_type
 class TrainModel(TaskBase):
     train_loader: Requires[Loader[Data]]
     valid_loader: Requires[Loader[Data]]
     
-    def build_task(self, train: Task[Loader[Data]], valid: Task[Loader[Data]], train_config: dict, seed: int):
+    def __init__(self, train: Task[Loader[Data]], valid: Task[Loader[Data]], train_config: dict, seed: int):
         self.train_loader = train
         self.valid_loader = valid
         self.train_config = train_config
@@ -75,12 +72,11 @@ class TrainModel(TaskBase):
         return PickleLoader(Model('<trained model>'), self.task_directory / 'trained.bin')
 
 
-@infer_task_type
 class TestModel(TaskBase):
     test_loader: Requires[Loader[Data]]
     model: Requires[Loader[Model]]
 
-    def build_task(self, test: Task[Loader[Data]], trained_model: Task[Loader[Model]]):
+    def __init__(self, test: Task[Loader[Data]], trained_model: Task[Loader[Model]]):
         self.test_loader = test
         self.model = trained_model
     
@@ -92,11 +88,10 @@ class TestModel(TaskBase):
         return result
 
 
-@infer_task_type
 class Main(TaskBase):
     results: RequiresList[dict]
 
-    def build_task(self):
+    def __init__(self):
         tasks: list[Task[dict]] = []
         for i in range(10):
             dataset = PreprocessData('mydata', split_ratio=.8, seed=i)

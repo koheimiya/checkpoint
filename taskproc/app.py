@@ -3,15 +3,13 @@ from typing import Any
 from pathlib import Path
 import sys
 import json
-import pprint
 import logging
-import io
 import os
 
 import click
 
 from .types import Context
-from .task import TaskType
+from .task import TaskBase
 
 
 LOGGER = logging.getLogger(__name__)
@@ -66,7 +64,7 @@ def main(taskfile: Path,
 
     # Run the main task
     entrypoint_fn = getattr(module, entrypoint)
-    assert issubclass(entrypoint_fn, TaskType), \
+    assert issubclass(entrypoint_fn, TaskBase), \
             f'Taskfile `{taskfile}` should contain a task(factory) `{entrypoint}`, but found `{entrypoint_fn}`.'
     entrypoint_task = entrypoint_fn(**kwargs)
     if not dont_force_entrypoint:

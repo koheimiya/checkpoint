@@ -16,10 +16,10 @@ RunnerFactory = Callable[P, Runner[R]]
 
 
 class Context:
-    cache_dir = Path(os.getenv('CP_CACHE_DIR', './.cache'))
-    executor_name = os.getenv('CP_EXECUTOR', 'process')
-    max_workers = int(os.getenv('CP_MAX_WORKERS', -1))
-    detect_source_change = bool(os.getenv('CP_DETECT_SOURCE_CHANGE', 0))
+    cache_dir = Path(os.getenv('TP_CACHE_DIR', './.cache'))
+    executor_name = os.getenv('TP_EXECUTOR', 'process')
+    max_workers = int(os.getenv('TP_MAX_WORKERS', -1))
+    detect_source_change = bool(os.getenv('TP_DETECT_SOURCE_CHANGE', 0))
     num_cpu = os.cpu_count()
 
     @classmethod

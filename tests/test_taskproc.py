@@ -1,15 +1,14 @@
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 import pytest
-from taskproc import infer_task_type, TaskBase, Req, Requires, Const, RequiresDict
+from taskproc import TaskBase, Req, Requires, Const, RequiresDict
 
 
-@infer_task_type
 class Choose(TaskBase):
     prev1: Requires[int] = Req()
     prev2: Requires[int] = Req()
 
-    def build_task(self, n: int, k: int):
+    def __init__(self, n: int, k: int):
         if 0 < k < n:
             self.prev1 = Choose(n - 1, k - 1)
             self.prev2 = Choose(n - 1, k)
@@ -58,28 +57,25 @@ def test_graph():
     assert sum(stats['stats'].values()) == 4
 
 
-@infer_task_type
 class TaskA(TaskBase, channel=['<mychan>', '<another_chan>']):
-    def build_task(self): ...
+    def __init__(self): ...
 
     def run_task(self) -> str:
         return 'hello'
 
 
-@infer_task_type
 class TaskB(TaskBase, channel='<mychan>'):
-    def build_task(self): ...
+    def __init__(self): ...
     
     def run_task(self) -> str:
         return 'world'
 
 
-@infer_task_type
 class TaskC(TaskBase, compress_level=-1):
     a: Requires[str] = Req()
     b: Requires[str] = Req()
 
-    def build_task(self):
+    def __init__(self):
         self.a = TaskA()
         self.b = TaskB()
     
@@ -96,9 +92,8 @@ def test_multiple_tasks():
     assert TaskC._task_config.db.compress_level == -1
 
 
-@infer_task_type
 class TaskRaise(TaskBase):
-    def build_task(self): ...
+    def __init__(self): ...
     def run_task(self):
         raise ValueError(42)
 
@@ -108,10 +103,9 @@ def test_raise():
         TaskRaise().run_graph()
 
 
-@infer_task_type
 class CreateFile(TaskBase):
 
-    def build_task(self, content: str):
+    def __init__(self, content: str):
         self.content = content
 
     def run_task(self) -> str:
@@ -121,11 +115,10 @@ class CreateFile(TaskBase):
         return str(outpath)
 
 
-@infer_task_type
 class GreetWithFile(TaskBase):
     filepath: Requires[str] = Req()
 
-    def build_task(self, name: str):
+    def __init__(self, name: str):
         self.filepath = CreateFile(f'Hello, {name}!')
 
     def run_task(self) -> str:
@@ -166,20 +159,18 @@ def test_requires_directory():
     check_output('world')                       # file recreated
 
 
-@infer_task_type
 class CountElem(TaskBase):
-    def build_task(self, x: list | dict):
+    def __init__(self, x: list | dict):
         self.x = x
 
     def run_task(self) -> int:
         return len(self.x)
 
 
-@infer_task_type
 class SummarizeParam(TaskBase):
     d_counts: RequiresDict[str, int]
 
-    def build_task(self, **params: Any):
+    def __init__(self, **params: Any):
         self.a_params = params
         self.a_container_keys = [k for k in params if isinstance(params[k], (list, dict))]
         self.d_counts = {k: CountElem(params[k]) for k in self.a_container_keys}
@@ -195,20 +186,18 @@ def test_json_param():
     assert res == {'x': 2, 'y': 3, 'z': None}
 
 
-@infer_task_type
 class MultiResultTask(TaskBase):
-    def build_task(self) -> None:
+    def __init__(self) -> None:
         pass
 
     def run_task(self) -> dict[str, list[str]]:
         return {'hello': ['world', '42']}
 
 
-@infer_task_type
 class DownstreamTask(TaskBase):
     up: Requires[str]
 
-    def build_task(self) -> None:
+    def __init__(self) -> None:
         self.up = MultiResultTask()['hello'][1]
 
     def run_task(self) -> str:
@@ -221,7 +210,6 @@ def test_mapping():
     assert DownstreamTask().run_graph() == '42'
 
 
-@infer_task_type
 class PrefixedJob(TaskBase, prefix_command='bash tests/run_with_hello.bash'):
     def run_task(self) -> None:
         print('world')
