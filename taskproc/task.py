@@ -282,7 +282,7 @@ class TaskBase(Generic[R]):
                 detach_output=detach_output
                 )
 
-        # Swap initializer
+        # Swap initializer to make __init__ lazy
         cls._build_task = cls.__init__  # type: ignore
         cls.__init__ = wraps(cls._build_task)(cls.__task_init__)
         super().__init_subclass__(**kwargs)
