@@ -88,7 +88,7 @@ class TestModel(TaskBase):
         return result
 
 
-class Main(TaskBase):
+class Main(TaskBase, interactive=True):
     results: RequiresList[dict]
 
     def __init__(self):

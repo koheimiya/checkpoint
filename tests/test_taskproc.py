@@ -92,7 +92,7 @@ def test_multiple_tasks():
     assert TaskC._task_config.db.compress_level == -1
 
 
-class TaskRaise(TaskBase, local_worker=True):
+class TaskRaise(TaskBase, interactive=True):
     def __init__(self): ...
     def run_task(self):
         raise ValueError(42)

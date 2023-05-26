@@ -42,7 +42,7 @@ class TaskConfig(Generic[R]):
             channels: tuple[str, ...],
             compress_level: int,
             prefix_command: str,
-            local_worker: bool,
+            interactive: bool,
             ) -> None:
 
         self.task_class = task_class
@@ -50,9 +50,9 @@ class TaskConfig(Generic[R]):
         self.compress_level = compress_level
         self.channels = (self.name,) + channels
         self.prefix_command = prefix_command
-        self.local_worker = local_worker
-        if self.local_worker and self.prefix_command:
-            LOGGER.warning(f'`local_worker` is set True, nullifying the effect of `prefix_command`={self.prefix_command!r}')
+        self.interactive = interactive
+        if self.interactive and self.prefix_command:
+            LOGGER.warning(f'`interactive` is set True, nullifying the effect of `prefix_command`={self.prefix_command!r}')
         self.worker_registry: dict[Json, TaskWorker[R]] = {}
 
 
@@ -121,7 +121,7 @@ class TaskWorker(Generic[R]):
         self.run_and_save_instance_task(on_child_process=on_child_process)
 
     def run_and_save_instance_task(self, on_child_process: bool) -> None:
-        if self.config.local_worker:
+        if self.config.interactive:
             res = self.instance.run_task()
             self.config.db.save(self.arg_key, res)
         elif on_child_process and self.config.prefix_command == '':
@@ -184,6 +184,10 @@ class TaskWorker(Generic[R]):
     @property
     def task_args(self) -> dict[str, Any]:
         return json.loads(self.arg_key)
+
+    @property
+    def is_interactive(self) -> bool:
+        return self.config.interactive
 
     @property
     def stdout_path(self) -> Path:
@@ -260,7 +264,7 @@ class TaskBase(Generic[R]):
 
         compress_level = kwargs.pop('compress_level', 9)
         prefix_command = kwargs.pop('prefix_command', '')
-        local_worker = kwargs.pop('local_worker', False)
+        interactive = kwargs.pop('interactive', False)
 
         # Fill missing requirement
         ann = inspect.get_annotations(cls, eval_str=True)
@@ -275,7 +279,7 @@ class TaskBase(Generic[R]):
                 channels=channels,
                 compress_level=compress_level,
                 prefix_command=prefix_command,
-                local_worker=local_worker,
+                interactive=interactive,
                 )
 
         # Swap initializer to make __init__ lazy

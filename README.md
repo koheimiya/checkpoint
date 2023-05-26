@@ -141,15 +141,6 @@ class DownstreamTask(TaskBase):
         self.dep = MultiOutputTask()['foo']
 ```
 
-
-### Job scheduling and prefixes
-Tasks can be run with job schedulers using `prefix_command`, which will be inserted just before each task call.
-```python
-
-class TaskWithJobScheduler(TaskBase, prefix_command='jbsub -interactive -tty -queue x86_1h -cores 16+1 -mem 64g'):
-    ...
-```
-
 ### Data directories
 
 Use `task.task_directory` to get a fresh path dedicated to each task.
@@ -163,6 +154,26 @@ class TrainModel(TaskBase):
         model_path = self.task_directory / 'model.bin'
         model.save(model_path)
         return model_path
+```
+
+
+### Job scheduling and prefixes
+Tasks can be run with job schedulers using `prefix_command`, which will be inserted just before each task call.
+```python
+
+class TaskWithJobScheduler(TaskBase, prefix_command='jbsub -interactive -tty -queue x86_1h -cores 16+1 -mem 64g'):
+    ...
+```
+
+
+### Interactive tasks
+Interactive task is beneficial for debugging (e.g., with breakpoints) but harmful for parallel computing.
+In `taskproc`, all the tasks are executed detached by default.
+One can make them interactive by explicitly specifying like so:
+```python
+
+class InteractiveTask(TaskBase, interactive=True):
+    ...
 ```
 
 ### Execution policy configuration
@@ -209,23 +220,24 @@ class Main(TaskBase):
 The command runs the `Main()` task and stores the cache right next to `taskfile.py` as `.cache/taskproc/...`.
 Please refer to `taskproc --help` for more info.
 
+
 ### Built-in properties
 Here is the list of the built-in properties/methods of `TaskBase`:
 
-| Name | Type | Description |
-|--|--|--|
-| `task_name`   | class property   | String id of the task class |
-| `task_id`     | instance property | Integer id of the task, unique within the same task class  |
-| `task_args`   | instance property | The arguments of the task in JSON |
-| `task_directory` | instance property | Path to the data directory of the task |
-| `task_stdout` | instance property | Path to the task's stdout |
-| `task_stderr` | instance property | Path to the task's stderr |
-| `run_task`    | instance method   | Run the task |
-| `run_graph`    | instance method   | Run the task after necessary upstream tasks and save the results in the cache |
-| `run_graph_with_stats`    | instance method   | `run_graph` with additional statistics |
-| `get_task_result`    | instance method   | Directly get the result of the task (fails if the cache is missing) |
-| `clear_task`    | instance method   | Clear the cache of the task instance |
-| `clear_all_tasks`    | class method   | Clear the cache of the task class |
+| Name | Owner | Type | Description |
+|--|--|--|--|
+| `task_name`            | class    | property | String id of the task class |
+| `task_id`              | instance | property | Integer id of the task, unique within the same task class  |
+| `task_args`            | instance | property | The arguments of the task in JSON |
+| `task_directory`       | instance | property | Path to the data directory of the task |
+| `task_stdout`          | instance | property | Path to the task's stdout |
+| `task_stderr`          | instance | property | Path to the task's stderr |
+| `run_task`             | instance | method   | Run the task |
+| `run_graph`            | instance | method   | Run the task after necessary upstream tasks and save the results in the cache |
+| `run_graph_with_stats` | instance | method   | `run_graph` with additional statistics |
+| `get_task_result`      | instance | method   | Directly get the result of the task (fails if the cache is missing) |
+| `clear_task`           | instance | method   | Clear the cache of the task instance |
+| `clear_all_tasks`      | class    | method   | Clear the cache of the task class |
 
 ## TODO
 - [ ] Task graph visualizer

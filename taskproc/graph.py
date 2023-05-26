@@ -5,14 +5,14 @@ from typing import Any, Sequence
 from typing_extensions import Self, runtime_checkable, Protocol
 from collections import defaultdict
 from dataclasses import dataclass
-from concurrent.futures import Future, ProcessPoolExecutor, wait, FIRST_COMPLETED, Executor
+from concurrent.futures import Future, ProcessPoolExecutor, ThreadPoolExecutor, wait, FIRST_COMPLETED, Executor
 import logging
 
 from tqdm.auto import tqdm
 import cloudpickle
 import networkx as nx
 
-from .types import Json, TaskKey
+from .types import Json, TaskKey, Context
 
 
 LOGGER = logging.getLogger(__name__)
@@ -27,6 +27,8 @@ class TaskHandlerProtocol(Protocol):
     def channels(self) -> ChannelLabels: ...
     @property
     def source_timestamp(self) -> datetime: ...
+    @property
+    def is_interactive(self) -> bool: ...
     def to_tuple(self) -> TaskKey: ...
     def get_prerequisites(self) -> Sequence[TaskHandlerProtocol]: ...
     def peek_timestamp(self) -> datetime | None: ...
@@ -122,6 +124,9 @@ class TaskGraph:
             out[path].append(args)
         return dict(out)
 
+    def interactive_tasks(self) -> list[TaskKey]:
+        return [x for x in self.G if self.get_task(x).is_interactive]
+
 
 def run_task_graph(
         graph: TaskGraph,
@@ -132,6 +137,14 @@ def run_task_graph(
         ) -> dict[str, Any]:
     """ Consume task graph concurrently.
     """
+    interactive_tasks = graph.interactive_tasks()
+    if interactive_tasks and isinstance(executor, ProcessPoolExecutor):
+        LOGGER.warning(f'Interactive task is detected while the executor is ProcessPoolExecutor: {interactive_tasks!r}. Override it with ThreadPoolExecutor.')
+        executor = Context.get_executor(executor_name='thread')
+    if interactive_tasks and show_progress:
+        LOGGER.warning(f'Interactive task is detected while `show_progress` is set True. The progress bars may interfere with the task output.')
+
+
     stats = {k: len(args) for k, args in graph.get_nodes_by_task().items()}
     LOGGER.debug(f'Following tasks will be called: {stats}')
     info = {'stats': stats, 'generations': []}
