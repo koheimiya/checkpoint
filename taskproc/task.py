@@ -17,8 +17,6 @@ import cloudpickle
 import subprocess
 import sys
 
-from networkx.generators import internet_as_graphs
-
 
 from .types import Json, TaskKey, Context
 from .database import Database
@@ -229,7 +227,7 @@ class TaskWorker(Generic[R]):
             db.delete(self.arg_key)
         except KeyError:
             pass
-        directory = self._data_directory_uninit
+        directory = self.directory
         if directory.exists():
             shutil.rmtree(directory)
 
