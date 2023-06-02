@@ -132,11 +132,9 @@ class TaskWorker(Generic[R]):
                     }
             LOGGER.error(f'Error occurred while running detached task {task_info}')
             LOGGER.error(f'Here is the detached stdout ({self.stdout_path}):')
-            for line in open(self.stdout_path).readlines():
-                LOGGER.error(line)
+            LOGGER.error(open(self.stdout_path).read())
             LOGGER.error(f'Here is the detached stderr ({self.stderr_path}):')
-            for line in open(self.stderr_path).readlines():
-                LOGGER.error(line)
+            LOGGER.error(open(self.stderr_path).read())
             raise
 
     def run_and_save_instance_task(self, on_child_process: bool) -> None:
