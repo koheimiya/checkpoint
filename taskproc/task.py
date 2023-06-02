@@ -164,16 +164,16 @@ class TaskWorker(Generic[R]):
                 subprocess.run(
                         shell_command,
                         shell=True, check=True, text=True,
-                        stdout=open(self.stdout_path, 'w+'),
-                        stderr=open(self.stderr_path, 'w+')
+                        stdout=open(self.stdout_path, 'a+'),
+                        stderr=open(self.stderr_path, 'a+')
                         )
             finally:
                 shutil.rmtree(dir_ref)
 
     def run_instance_task_with_captured_output(self) -> R:
         with ExitStack() as stack:
-            stdout = stack.enter_context(open(self.stdout_path, 'w+'))
-            stderr = stack.enter_context(open(self.stderr_path, 'w+'))
+            stdout = stack.enter_context(open(self.stdout_path, 'a+'))
+            stderr = stack.enter_context(open(self.stderr_path, 'a+'))
             stack.enter_context(redirect_stdout(stdout))
             stack.enter_context(redirect_stderr(stderr))
             return self.instance.run_task()
