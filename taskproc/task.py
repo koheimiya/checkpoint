@@ -17,6 +17,8 @@ import cloudpickle
 import subprocess
 import sys
 
+from networkx.generators import internet_as_graphs
+
 
 from .types import Json, TaskKey, Context
 from .database import Database
@@ -118,7 +120,24 @@ class TaskWorker(Generic[R]):
     def set_result(self, on_child_process: bool = False) -> None:
         if self.data_directory.exists():
             shutil.rmtree(self.data_directory)
-        self.run_and_save_instance_task(on_child_process=on_child_process)
+        try:
+            self.run_and_save_instance_task(on_child_process=on_child_process)
+        except:
+            if self.config.interactive:
+                raise
+            task_info = {
+                    'name': self.config.name,
+                    'id': self.task_id,
+                    'args': self.task_args,
+                    }
+            LOGGER.error(f'Error occurred while running detached task {task_info}')
+            LOGGER.error(f'Here is the detached stdout ({self.stdout_path}):')
+            for line in open(self.stdout_path).readlines():
+                LOGGER.error(line)
+            LOGGER.error(f'Here is the detached stderr ({self.stderr_path}):')
+            for line in open(self.stderr_path).readlines():
+                LOGGER.error(line)
+            raise
 
     def run_and_save_instance_task(self, on_child_process: bool) -> None:
         if self.config.interactive:
@@ -154,27 +173,12 @@ class TaskWorker(Generic[R]):
                 shutil.rmtree(dir_ref)
 
     def run_instance_task_with_captured_output(self) -> R:
-        try:
-            with ExitStack() as stack:
-                stdout = stack.enter_context(open(self.stdout_path, 'w+'))
-                stderr = stack.enter_context(open(self.stderr_path, 'w+'))
-                stack.enter_context(redirect_stdout(stdout))
-                stack.enter_context(redirect_stderr(stderr))
-                return self.instance.run_task()
-        except:
-            task_info = {
-                    'name': self.config.name,
-                    'id': self.task_id,
-                    'args': self.task_args,
-                    }
-            LOGGER.error(f'Error occurred while running detached task {task_info}')
-            LOGGER.error(f'Here is the detached stdout ({self.stdout_path}):')
-            for line in open(self.stdout_path).readlines():
-                LOGGER.error(line)
-            LOGGER.error(f'Here is the detached stderr ({self.stderr_path}):')
-            for line in open(self.stderr_path).readlines():
-                LOGGER.error(line)
-            raise
+        with ExitStack() as stack:
+            stdout = stack.enter_context(open(self.stdout_path, 'w+'))
+            stderr = stack.enter_context(open(self.stderr_path, 'w+'))
+            stack.enter_context(redirect_stdout(stdout))
+            stack.enter_context(redirect_stderr(stderr))
+            return self.instance.run_task()
         raise NotImplementedError('Should not happen')
 
     @property
