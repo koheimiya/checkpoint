@@ -159,12 +159,14 @@ class TaskWorker(Generic[R]):
                     cloudpickle.dump(self, worker_ref)
 
                 shell_command = ' '.join([self.config.prefix_command, sys.executable, '-c', repr(pycmd)])
-                subprocess.run(
-                        shell_command,
-                        shell=True, check=True, text=True,
-                        stdout=open(self.stdout_path, 'w+'),
-                        stderr=open(self.stderr_path, 'w+')
-                        )
+                with open(self.stdout_path, 'w+') as stdout:
+                    with open(self.stderr_path, 'w+') as stderr:
+                        subprocess.run(
+                                shell_command,
+                                shell=True, check=True, text=True,
+                                stdout=stdout,
+                                stderr=stderr
+                                )
             finally:
                 shutil.rmtree(dir_ref)
 
