@@ -162,20 +162,20 @@ class TaskWorker(Generic[R]):
                 subprocess.run(
                         shell_command,
                         shell=True, check=True, text=True,
-                        stdout=open(self.stdout_path, 'a+'),
-                        stderr=open(self.stderr_path, 'a+')
+                        stdout=open(self.stdout_path, 'w+'),
+                        stderr=open(self.stderr_path, 'w+')
                         )
             finally:
                 shutil.rmtree(dir_ref)
 
     def run_instance_task_with_captured_output(self) -> R:
         with ExitStack() as stack:
-            stdout = stack.enter_context(open(self.stdout_path, 'a+'))
-            stack.callback(lambda: stdout.flush())
-            stderr = stack.enter_context(open(self.stderr_path, 'a+'))
-            stack.callback(lambda: stderr.flush())
+            stdout = stack.enter_context(open(self.stdout_path, 'w+'))
+            stderr = stack.enter_context(open(self.stderr_path, 'w+'))
             stack.enter_context(redirect_stdout(stdout))
+            stack.callback(lambda: stdout.flush())
             stack.enter_context(redirect_stderr(stderr))
+            stack.callback(lambda: stderr.flush())
             return self.instance.run_task()
         raise NotImplementedError('Should not happen')
 

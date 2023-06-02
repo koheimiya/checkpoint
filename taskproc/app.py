@@ -73,14 +73,13 @@ def main(taskfile: Path,
 
     if entrypoint_task.task_stdout.exists():
         print("==== ENTRYPOINT STDOUT (DETACHED) ====")
-        for line in open(entrypoint_task.task_stdout).readlines():
-            print(line, end='')
+        print(open(entrypoint_task.task_stdout).read())
     else:
         print("==== NO ENTRYPOINT STDOUT (DETACHED) ====")
+
     if entrypoint_task.task_stderr.exists():
         print("==== ENTRYPOINT STDERR (DETACHED) ====")
-        for line in open(entrypoint_task.task_stderr).readlines():
-            print(line, end='')
+        print(open(entrypoint_task.task_stderr).read())
     else:
         print("==== NO ENTRYPOINT STDERR (DETACHED) ====")
     return 0
