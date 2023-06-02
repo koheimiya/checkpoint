@@ -116,8 +116,8 @@ class TaskWorker(Generic[R]):
             return None
 
     def set_result(self, on_child_process: bool = False) -> None:
-        if self.data_directory.exists():
-            shutil.rmtree(self.data_directory)
+        if self.directory.exists():
+            shutil.rmtree(self.directory)
         try:
             self.run_and_save_instance_task(on_child_process=on_child_process)
         except:
