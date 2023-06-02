@@ -171,7 +171,9 @@ class TaskWorker(Generic[R]):
     def run_instance_task_with_captured_output(self) -> R:
         with ExitStack() as stack:
             stdout = stack.enter_context(open(self.stdout_path, 'a+'))
+            stack.callback(lambda: stdout.flush())
             stderr = stack.enter_context(open(self.stderr_path, 'a+'))
+            stack.callback(lambda: stderr.flush())
             stack.enter_context(redirect_stdout(stdout))
             stack.enter_context(redirect_stderr(stderr))
             return self.instance.run_task()
