@@ -33,6 +33,7 @@ class TaskHandlerProtocol(Protocol):
     def get_prerequisites(self) -> Sequence[TaskHandlerProtocol]: ...
     def peek_timestamp(self) -> datetime | None: ...
     def set_result(self, on_child_process: bool) -> None: ...
+    def log_error(self) -> None: ...
 
 
 @dataclass
@@ -161,7 +162,7 @@ def run_task_graph(
 
     # Execute tasks
     standby = graph.get_initial_tasks()
-    in_process: set[Future[tuple[ChannelLabels, TaskKey]]] = set()
+    in_process: dict[Future[tuple[ChannelLabels, TaskKey]], TaskKey] = dict()
     with executor as executor:
         while standby or in_process:
             # Log some stats
@@ -189,15 +190,22 @@ def run_task_graph(
 
                 for key in to_submit:
                     future = executor.submit(_run_task, queue, cloudpickle.dumps(graph.get_task(key)), isinstance(executor, ProcessPoolExecutor))
-                    in_process.add(future)
+                    in_process[future] = key
 
             # Wait for the first tasks to complete
-            done, in_process = wait(in_process, return_when=FIRST_COMPLETED)
+            done, _ = wait(in_process.keys(), return_when=FIRST_COMPLETED)
 
             # Update graph
             standby = defaultdict(list, leftover)
             for done_future in done:
-                queue_done, x_done = done_future.result()
+                try:
+                    queue_done, x_done = done_future.result()
+                except:
+                    task = graph.get_task(in_process[done_future])
+                    task.log_error()
+                    raise
+
+                del in_process[done_future]
                 if show_progress:
                     progressbars[x_done[0]].update()
 

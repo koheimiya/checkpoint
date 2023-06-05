@@ -118,11 +118,10 @@ class TaskWorker(Generic[R]):
     def set_result(self, on_child_process: bool = False) -> None:
         if self.directory.exists():
             shutil.rmtree(self.directory)
-        try:
-            self.run_and_save_instance_task(on_child_process=on_child_process)
-        except:
-            if self.config.interactive:
-                raise
+        self.run_and_save_instance_task(on_child_process=on_child_process)
+
+    def log_error(self) -> None:
+        if not self.config.interactive:
             task_info = {
                     'name': self.config.name,
                     'id': self.task_id,
@@ -133,7 +132,6 @@ class TaskWorker(Generic[R]):
             LOGGER.error(open(self.stdout_path).read())
             LOGGER.error(f'Here is the detached stderr ({self.stderr_path}):')
             LOGGER.error(open(self.stderr_path).read())
-            raise
 
     def run_and_save_instance_task(self, on_child_process: bool) -> None:
         if self.config.interactive:
