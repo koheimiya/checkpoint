@@ -201,6 +201,8 @@ def run_task_graph(
                 try:
                     queue_done, x_done = done_future.result()
                 except:
+                    for pbar in progressbars.values():
+                        pbar.close()
                     task = graph.get_task(in_process[done_future])
                     task.log_error()
                     raise
