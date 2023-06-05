@@ -151,7 +151,7 @@ class TaskWorker(Generic[R]):
                 worker_path = Path(dir_ref) / 'worker.pkl'
                 pycmd = f"""import pickle
                     worker = pickle.load(open("{worker_path}", "rb"))
-                    res = worker.instance.run_task()
+                    res = worker.run_instance_task_with_captured_output()
                     worker.config.db.save(worker.arg_key, res)
                 """.replace('\n', ';')
 
@@ -159,14 +159,20 @@ class TaskWorker(Generic[R]):
                     cloudpickle.dump(self, worker_ref)
 
                 shell_command = ' '.join([self.config.prefix_command, sys.executable, '-c', repr(pycmd)])
-                with open(self.stdout_path, 'w+') as stdout:
-                    with open(self.stderr_path, 'w+') as stderr:
-                        subprocess.run(
-                                shell_command,
-                                shell=True, check=True, text=True,
-                                stdout=stdout,
-                                stderr=stderr
-                                )
+                res = subprocess.run(
+                        shell_command,
+                        shell=True, check=True, text=True,
+                        capture_output=True,
+                        )
+                
+                def _prepend(path: Path, text: str):
+                    original_contents = open(path, 'r').read()
+                    with open(path, 'w') as f:
+                        f.write(text)
+                        f.write(original_contents)
+                _prepend(self.stdout_path, res.stdout)
+                _prepend(self.stderr_path, res.stderr)
+
             finally:
                 shutil.rmtree(dir_ref)
 
