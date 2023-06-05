@@ -164,18 +164,16 @@ class TaskWorker(Generic[R]):
                         shell=True, text=True,
                         capture_output=True,
                         )
-                try:
-                    res.check_returncode()
-                finally:
-                    def _prepend(path: Path, text: str):
-                        original_contents = open(path, 'r').read()
-                        with open(path, 'w') as f:
-                            f.write('=== caller log ===\n')
-                            f.write(text)
-                            f.write('=== callee log ===\n')
-                            f.write(original_contents)
-                    _prepend(self.stdout_path, res.stdout)
-                    _prepend(self.stderr_path, res.stderr)
+                def _prepend(path: Path, text: str):
+                    original_contents = open(path, 'r').read()
+                    with open(path, 'w') as f:
+                        f.write('=== caller log ===\n')
+                        f.write(text)
+                        f.write('=== callee log ===\n')
+                        f.write(original_contents)
+                _prepend(self.stdout_path, res.stdout)
+                _prepend(self.stderr_path, res.stderr)
+                res.check_returncode()
             finally:
                 shutil.rmtree(dir_ref)
 
