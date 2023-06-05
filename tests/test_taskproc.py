@@ -224,4 +224,4 @@ def test_prefix_command(capsys):
     assert captured.out == ''
     assert captured.err == ''
 
-    assert open(task.task_stdout, 'r').read() == 'hello\nworld\n'
+    assert open(task.task_stdout, 'r').read() == '=== caller log ===\nhello\n=== callee log ===\nworld\n'
