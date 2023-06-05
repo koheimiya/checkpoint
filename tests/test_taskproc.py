@@ -1,12 +1,17 @@
+from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 import pytest
-from taskproc import TaskBase, Req, Requires, Const, RequiresDict
+from taskproc import TaskBase, Task, Requires, Const, RequiresDict
+import time
+from taskproc.graph import FailedTaskError
+
+from taskproc.task import RequiresList
 
 
 class Choose(TaskBase):
-    prev1: Requires[int] = Req()
-    prev2: Requires[int] = Req()
+    prev1: Requires[int]
+    prev2: Requires[int]
 
     def __init__(self, n: int, k: int):
         if 0 < k < n:
@@ -72,8 +77,8 @@ class TaskB(TaskBase, channel='<mychan>'):
 
 
 class TaskC(TaskBase, compress_level=-1):
-    a: Requires[str] = Req()
-    b: Requires[str] = Req()
+    a: Requires[str]
+    b: Requires[str]
 
     def __init__(self):
         self.a = TaskA()
@@ -99,7 +104,7 @@ class TaskRaise(TaskBase):
 
 
 def test_raise():
-    with pytest.raises(ValueError):
+    with pytest.raises(FailedTaskError):
         TaskRaise().run_graph()
 
 
@@ -115,7 +120,7 @@ class CreateFile(TaskBase):
 
 
 class GreetWithFile(TaskBase):
-    filepath: Requires[str] = Req()
+    filepath: Requires[str]
 
     def __init__(self, name: str):
         self.filepath = CreateFile(f'Hello, {name}!')
@@ -225,3 +230,27 @@ def test_prefix_command(capsys):
     assert captured.err == ''
 
     assert open(task.task_stdout, 'r').read() == '=== caller log ===\nhello\n=== callee log ===\nworld\n'
+
+
+class SleepTask(TaskBase):
+    prevs: RequiresList[float]
+    def __init__(self, *prevs: Task[float]):
+        self.prevs = list(prevs)
+
+    def run_task(self):
+        t = .5
+        time.sleep(t)
+        return t + max(self.prevs, default=0)
+
+
+def test_sleep_task():
+    SleepTask.clear_all_tasks()
+    task1 = SleepTask()
+    task2 = SleepTask()
+    task3 = SleepTask(task1)
+    task4 = SleepTask(task2)
+    task5 = SleepTask(task3, task4)
+    start = time.perf_counter()
+    task5.run_graph()
+    elapsed = time.perf_counter() - start
+    assert elapsed < 2

@@ -20,7 +20,7 @@ import sys
 
 from .types import Json, TaskKey, Context
 from .database import Database
-from .graph import TaskGraph, run_task_graph
+from .graph import FailedTaskError, TaskGraph, run_task_graph
 
 
 LOGGER = logging.getLogger(__name__)
@@ -332,13 +332,14 @@ class TaskBase(Generic[R]):
         self._task_worker.clear()
 
     def run_graph(
-            self, *,
+            self: TaskClassProtocol[T], *,
             executor: Executor | None = None,
             max_workers: int | None = None,
             rate_limits: dict[str, int] | None = None,
             detect_source_change: bool | None = None,
             show_progress: bool = False,
-            ) -> R:
+            ) -> T:
+        assert isinstance(self, TaskBase)
         return self.run_graph_with_stats(
                 executor=executor,
                 max_workers=max_workers,
@@ -348,14 +349,15 @@ class TaskBase(Generic[R]):
                 )[0]
 
     def run_graph_with_stats(
-            self, *,
+            self: TaskClassProtocol[T], *,
             executor: Executor | None = None,
             max_workers: int | None = None,
             rate_limits: dict[str, int] | None = None,
             detect_source_change: bool | None = None,
             dump_generations: bool = False,
             show_progress: bool = False,
-            ) -> tuple[R, dict[str, Any]]:
+            ) -> tuple[T, dict[str, Any]]:
+        assert isinstance(self, TaskBase)
         if detect_source_change is None:
             detect_source_change = Context.detect_source_change
         graph = TaskGraph.build_from(self._task_worker, detect_source_change=detect_source_change)
@@ -364,7 +366,12 @@ class TaskBase(Generic[R]):
             executor = Context.get_executor(max_workers=max_workers)
         else:
             assert max_workers is None
-        stats = run_task_graph(graph=graph, executor=executor, rate_limits=rate_limits, dump_graphs=dump_generations, show_progress=show_progress)
+
+        try:
+            stats = run_task_graph(graph=graph, executor=executor, rate_limits=rate_limits, dump_graphs=dump_generations, show_progress=show_progress)
+        except FailedTaskError as e:
+            e.task.log_error()
+            raise
         return self._task_worker.get_result(), stats
 
     def get_task_result(self) -> R:
