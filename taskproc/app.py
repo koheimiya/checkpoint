@@ -71,6 +71,7 @@ def main(taskfile: Path,
         entrypoint_task.clear_task()
     _, stats = entrypoint_task.run_graph_with_stats(rate_limits=rate_limits, show_progress=not dont_show_progress)
 
+    os.system('stty sane')  # terminal sometimes breaks for some reason.
     if entrypoint_task.task_stdout.exists():
         print("==== ENTRYPOINT STDOUT (DETACHED) ====")
         print(open(entrypoint_task.task_stdout).read())
