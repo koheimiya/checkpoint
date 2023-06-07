@@ -218,7 +218,6 @@ class PrefixedJob(TaskBase, prefix_command='bash tests/run_with_hello.bash'):
     def run_task(self) -> None:
         print('world')
         return
-    ...
 
 
 def test_prefix_command(capsys):

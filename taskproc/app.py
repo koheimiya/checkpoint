@@ -71,8 +71,7 @@ def main(taskfile: Path,
         entrypoint_task.clear_task()
     _, stats = entrypoint_task.run_graph_with_stats(rate_limits=rate_limits, show_progress=not dont_show_progress)
 
-    # XXX: Need fix in future to better handle broken tty, e.g., by executing 
-    os.system('stty sane')  # Fix broken tty after Popen with tricky command
+    os.system('stty sane')  # Fix broken tty after Popen with tricky command. Need some fix in the future.
     if entrypoint_task.task_stdout.exists():
         print("==== ENTRYPOINT STDOUT (DETACHED) ====")
         print(open(entrypoint_task.task_stdout).read())

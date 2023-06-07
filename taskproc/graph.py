@@ -1,5 +1,6 @@
 """ DAG processor """
 from __future__ import annotations
+from contextlib import ExitStack
 from datetime import datetime
 from typing import Any, Sequence
 from typing_extensions import Self, runtime_checkable, Protocol
@@ -151,7 +152,10 @@ def run_task_graph(
     info = {'stats': stats, 'generations': []}
 
     if show_progress:
-        progressbars = {k: tqdm(range(n), desc=k, position=i) for i, (k, n) in enumerate(stats.items())}
+        progressbars = {
+                k: tqdm(range(n), desc=k, position=i, mininterval=.1, maxinterval=1)
+                for i, (k, n) in enumerate(stats.items())
+                }
     else:
         progressbars = {}
 
@@ -163,63 +167,64 @@ def run_task_graph(
     # Execute tasks
     standby = graph.get_initial_tasks()
     in_process: dict[Future[tuple[ChannelLabels, TaskKey]], TaskKey] = dict()
-    try:
-        with executor as executor:
-            while standby or in_process:
-                # Log some stats
-                LOGGER.debug(
-                        f'nodes: {graph.size}, '
-                        f'standby: {len(standby)}, '
-                        f'in_process: {len(in_process)}'
-                        )
-                if dump_graphs:
-                    info['generations'].append(graph.get_nodes_by_task())
 
-                # Submit all leaf tasks
-                leftover: dict[ChannelLabels, list[TaskKey]] = {}
-                for queue, keys in standby.items():
-                    if any(q in rate_limits for q in queue):
-                        free = min(rate_limits[q] - occupied[q] for q in queue if q in rate_limits)
-                        to_submit, to_hold = keys[:free], keys[free:]
-                        for q in queue:
-                            if q in occupied:
-                                occupied[q] += len(to_submit)
-                        if to_hold:
-                            leftover[queue] = to_hold
-                    else:
-                        to_submit = keys
-
-                    for key in to_submit:
-                        future = executor.submit(_run_task, queue, cloudpickle.dumps(graph.get_task(key)), isinstance(executor, ProcessPoolExecutor))
-                        in_process[future] = key
-
-                # Wait for the first tasks to complete
-                done, _ = wait(in_process.keys(), return_when=FIRST_COMPLETED)
-
-                # Update graph
-                standby = defaultdict(list, leftover)
-                for done_future in done:
-                    queue_done, x_done = try_getting_result(done_future, task_key=in_process[done_future], graph=graph)
-
-                    del in_process[done_future]
-                    if show_progress:
-                        progressbars[x_done[0]].update()
-
-                    # Update occupied
-                    for q in queue_done:
-                        if q in occupied:
-                            occupied[q] -= 1
-                            assert occupied[q] >= 0
-
-                    # Remove node from graph
-                    ys = graph.pop_with_new_leaves(x_done)
-
-                    # Update standby
-                    for queue, task in ys.items():
-                        standby[queue].extend(task)
-    finally:
+    with ExitStack() as stack:
         for pbar in progressbars.values():
-            pbar.close()
+            stack.enter_context(pbar)
+        executor = stack.enter_context(executor)
+
+        while standby or in_process:
+            # Log some stats
+            LOGGER.debug(
+                    f'nodes: {graph.size}, '
+                    f'standby: {len(standby)}, '
+                    f'in_process: {len(in_process)}'
+                    )
+            if dump_graphs:
+                info['generations'].append(graph.get_nodes_by_task())
+
+            # Submit all leaf tasks
+            leftover: dict[ChannelLabels, list[TaskKey]] = {}
+            for queue, keys in standby.items():
+                if any(q in rate_limits for q in queue):
+                    free = min(rate_limits[q] - occupied[q] for q in queue if q in rate_limits)
+                    to_submit, to_hold = keys[:free], keys[free:]
+                    for q in queue:
+                        if q in occupied:
+                            occupied[q] += len(to_submit)
+                    if to_hold:
+                        leftover[queue] = to_hold
+                else:
+                    to_submit = keys
+
+                for key in to_submit:
+                    future = executor.submit(_run_task, queue, cloudpickle.dumps(graph.get_task(key)), isinstance(executor, ProcessPoolExecutor))
+                    in_process[future] = key
+
+            # Wait for the first tasks to complete
+            done, _ = wait(in_process.keys(), return_when=FIRST_COMPLETED)
+
+            # Update graph
+            standby = defaultdict(list, leftover)
+            for done_future in done:
+                queue_done, x_done = try_getting_result(done_future, task_key=in_process[done_future], graph=graph)
+
+                del in_process[done_future]
+                if show_progress:
+                    progressbars[x_done[0]].update()
+
+                # Update occupied
+                for q in queue_done:
+                    if q in occupied:
+                        occupied[q] -= 1
+                        assert occupied[q] >= 0
+
+                # Remove node from graph
+                ys = graph.pop_with_new_leaves(x_done)
+
+                # Update standby
+                for queue, task in ys.items():
+                    standby[queue].extend(task)
 
     # Sanity check
     assert graph.size == 0, f'Graph is not empty. Should not happen.'
@@ -235,9 +240,10 @@ def _run_task(queue: ChannelLabels, task_data: bytes, on_child_process: bool) ->
 
 
 class FailedTaskError(Exception):
-    def __init__(self, task: TaskHandlerProtocol):
-        super().__init__(task)
+    def __init__(self, task: TaskHandlerProtocol, exception: Exception, msg: str):
+        super().__init__(msg)
         self.task = task
+        self.exception = exception
 
 
 def try_getting_result(future: Future[tuple[ChannelLabels, TaskKey]], task_key: TaskKey, graph: TaskGraph) -> tuple[ChannelLabels, TaskKey]:
@@ -245,4 +251,4 @@ def try_getting_result(future: Future[tuple[ChannelLabels, TaskKey]], task_key: 
         return future.result()
     except Exception as e:
         task = graph.get_task(task_key)
-        raise FailedTaskError(task) from e
+        raise FailedTaskError(task, e, msg=f'Exception occurred in {task_key}') from e

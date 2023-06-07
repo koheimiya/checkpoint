@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Generic, NewType, Protocol, TypeVar
+import time
 
 from cloudpickle import dump, load
 from taskproc import TaskBase, Task, Requires, RequiresList
@@ -68,6 +69,8 @@ class TrainModel(TaskBase):
     def run_task(self) -> Loader[Model]:
         train_data = self.train_loader.load()
         valid_data = self.valid_loader.load()
+        time.sleep(1)
+        
         # Train model with data and save it to trained_path ...
         return PickleLoader(Model('<trained model>'), self.task_directory / 'trained.bin')
 
