@@ -9,7 +9,8 @@ Limitations:
     - No priority-based scheduling.
 """
 from .types import Context
-from .task import Task, TaskBase, Req, Requires, RequiresList, RequiresDict, Const, FailedTaskError
+from .task import Task, TaskBase, Req, Requires, RequiresList, RequiresDict, Const
+from .graph import FailedTaskError
 
 
 __EXPORT__ = [

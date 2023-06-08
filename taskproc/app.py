@@ -8,6 +8,8 @@ import os
 
 import click
 
+from taskproc.graph import FailedTaskError
+
 from .types import Context
 from .task import TaskBase
 
@@ -72,7 +74,12 @@ def main(taskfile: Path,
     entrypoint_task = entrypoint_fn(**kwargs)
     if not dont_force_entrypoint:
         entrypoint_task.clear_task()
-    _, stats = entrypoint_task.run_graph_with_stats(rate_limits=rate_limits, show_progress=not dont_show_progress)
+    try:
+        _, stats = entrypoint_task.run_graph_with_stats(rate_limits=rate_limits, show_progress=not dont_show_progress)
+    except FailedTaskError as e:
+        os.system('stty sane')  # Fix broken tty after Popen with tricky command. Need some fix in the future.
+        e.task.log_error()
+        raise
 
     os.system('stty sane')  # Fix broken tty after Popen with tricky command. Need some fix in the future.
     if entrypoint_task.task_stdout.exists():

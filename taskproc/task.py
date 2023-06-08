@@ -20,7 +20,7 @@ import sys
 
 from .types import Json, TaskKey, Context
 from .database import Database
-from .graph import FailedTaskError, TaskGraph, run_task_graph
+from .graph import TaskGraph, run_task_graph
 
 
 LOGGER = logging.getLogger(__name__)
@@ -367,11 +367,7 @@ class TaskBase(Generic[R]):
         else:
             assert max_workers is None
 
-        try:
-            stats = run_task_graph(graph=graph, executor=executor, rate_limits=rate_limits, dump_graphs=dump_generations, show_progress=show_progress)
-        except FailedTaskError as e:
-            e.task.log_error()
-            raise
+        stats = run_task_graph(graph=graph, executor=executor, rate_limits=rate_limits, dump_graphs=dump_generations, show_progress=show_progress)
         return self._task_worker.get_result(), stats
 
     def get_task_result(self) -> R:
