@@ -4,6 +4,7 @@ from typing_extensions import Literal, NewType, ParamSpec
 import os
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, Executor
 from pathlib import Path
+import dotenv
 
 
 P = ParamSpec('P')
@@ -14,6 +15,9 @@ TaskKey = tuple[str, Json]
 Runner = Callable[[], R]  # Delayed computation
 RunnerFactory = Callable[P, Runner[R]]
 
+
+
+dotenv.load_dotenv()
 
 
 class Context:
