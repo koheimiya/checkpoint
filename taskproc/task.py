@@ -72,15 +72,15 @@ class TaskConfig(Generic[R]):
 
 class TaskWorker(Generic[R]):
     @classmethod
-    def make(cls, config: TaskConfig[R], instance: TaskBase[R], *args: Any, **kwargs: Any) -> Self:
-        arg_key = _serialize_arguments(instance._build_task, *args, **kwargs)
-        worker = config.worker_registry.get(arg_key, None)
+    def make(cls, task_config: TaskConfig[R], task_instance: TaskBase[R], *args: Any, **kwargs: Any) -> Self:
+        arg_key = _serialize_arguments(task_instance._build_task, *args, **kwargs)
+        worker = task_config.worker_registry.get(arg_key, None)
         if worker is not None:
             return worker
 
-        instance._build_task(*args, **kwargs)
-        worker = TaskWorker[R](config=config, instance=instance, arg_key=arg_key)
-        config.worker_registry[arg_key] = worker
+        task_instance._build_task(*args, **kwargs)
+        worker = TaskWorker[R](config=task_config, instance=task_instance, arg_key=arg_key)
+        task_config.worker_registry[arg_key] = worker
         return worker
 
     def __init__(self, config: TaskConfig[R], instance: TaskBase[R], arg_key: Json) -> None:

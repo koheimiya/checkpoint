@@ -241,3 +241,4 @@ Here is the list of the built-in properties/methods of `TaskBase`:
 
 ## TODO
 - [ ] Task graph visualizer
+- [ ] Browse status and log inside task tree
