@@ -7,6 +7,7 @@ from typing_extensions import Self, runtime_checkable, Protocol
 from collections import defaultdict
 from dataclasses import dataclass
 from concurrent.futures import Future, ProcessPoolExecutor, ThreadPoolExecutor, wait, FIRST_COMPLETED, Executor
+from pathlib import Path
 import logging
 
 from tqdm.auto import tqdm
@@ -30,6 +31,8 @@ class TaskHandlerProtocol(Protocol):
     def source_timestamp(self) -> datetime: ...
     @property
     def is_interactive(self) -> bool: ...
+    @property
+    def directory(self) -> Path: ...
     def to_tuple(self) -> TaskKey: ...
     def get_prerequisites(self) -> Sequence[TaskHandlerProtocol]: ...
     def peek_timestamp(self) -> datetime | None: ...
@@ -251,4 +254,4 @@ def try_getting_result(future: Future[tuple[ChannelLabels, TaskKey]], task_key: 
         return future.result()
     except Exception as e:
         task = graph.get_task(task_key)
-        raise FailedTaskError(task, e, msg=f'Exception occurred in {task_key}') from e
+        raise FailedTaskError(task, e, msg=f'Exception occurred in {task_key}, see logs at {str(task.directory)}') from e
