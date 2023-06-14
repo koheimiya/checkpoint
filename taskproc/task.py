@@ -165,7 +165,11 @@ class TaskWorker(Generic[R]):
                         capture_output=True,
                         )
                 def _prepend(path: Path, text: str):
-                    original_contents = open(path, 'r').read()
+                    try:
+                        original_contents = open(path, 'r').read()
+                    except:
+                        original_contents = f'<error while loading {str(path)}>'
+
                     with open(path, 'w') as f:
                         f.write('=== caller log ===\n')
                         f.write(text)
