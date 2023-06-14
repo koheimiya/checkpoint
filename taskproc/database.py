@@ -146,23 +146,26 @@ def _get_timestamp(path: Path) -> datetime:
 class IdTable:
     def __init__(self, path: Path | str) -> None:
         self.table = dc.Cache(directory=path)
+        self.lock = dc.Lock(self.table, 'global')
     
     def get(self, x: Any) -> int:
-        with self.table as ref:
-            try:
-                return ref[x]
-            except KeyError:
-                n = len(ref)
-                ref[x] = n
-                return n
+        with self.lock:
+            value = self.table.get(key=x)
+            if value is None:
+                with self.table.transact():
+                    value = len(self.table)
+                    self.table.set(key=x, value=value)
+            return value
 
     def __contains__(self, key: Any) -> bool:
-        with self.table as ref:
-            return key in ref
+        with self.lock:
+            return key in self.table
 
     def list_keys(self) -> list[str]:
-        with self.table as ref:
-            return list(map(str, ref))
+        with self.lock:
+            with self.table as ref:
+                return list(map(str, ref))
 
     def clear(self) -> None:
-        self.table.clear()
+        with self.lock:
+            self.table.clear()
