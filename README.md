@@ -240,6 +240,7 @@ Here is the list of the built-in properties/methods of `TaskBase`:
 | `clear_all_tasks`      | class    | method   | Clear the cache of the task class |
 
 ## TODO
-- [ ] Task graph visualizer
+- [ ] Manage the instance ids within the central scheduler to avoid bug with SQLite on NFS.
 - [ ] Browse status and log inside task tree
     - [ ] Log upstream tasks in the result directory
+- [ ] Task graph visualizer
