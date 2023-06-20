@@ -60,11 +60,12 @@ class Database(Generic[T]):
     def __post_init__(self) -> None:
         self.results_directory.mkdir(exist_ok=True)
 
-    def get_instance_dir(self, key: Json) -> InstanceDirectory[T]:
+    def get_instance_dir(self, key: Json, deps: dict[str, Path]) -> InstanceDirectory[T]:
         return InstanceDirectory(
                 base_path=self.results_directory,
                 instance_id=self.id_table.get(key),
                 argkey=key,
+                dependencies=deps,
                 compress_level=self.compress_level,
                 )
 
@@ -102,10 +103,11 @@ def _get_timestamp(path: Path) -> datetime:
 
 
 class InstanceDirectory(Generic[T]):
-    def __init__(self, base_path: Path, instance_id: int, argkey: Json, compress_level: int):
+    def __init__(self, base_path: Path, instance_id: int, argkey: Json, dependencies: dict[str, Path], compress_level: int):
         self.base_path = base_path
         self.task_id = instance_id
         self.argkey = argkey
+        self.dependencies = dependencies
         self.compress_level = compress_level
         self.initialize()
 
@@ -116,6 +118,13 @@ class InstanceDirectory(Generic[T]):
         with open(self.args_path, 'w') as ref:
             ref.write(self.argkey)
         self.data_dir.mkdir()
+        self.deps_dir.mkdir()
+        if self.dependencies:
+            for name, target in self.dependencies.items():
+                link_path = self.deps_dir / name
+                link_path.symlink_to(target.resolve())
+        else:
+            (self.deps_dir / '__NO_DEPENDENCIES__').touch()
 
     @property
     def path(self):
@@ -140,6 +149,10 @@ class InstanceDirectory(Generic[T]):
     @property
     def data_dir(self) -> Path:
         return self.path / 'data'
+
+    @property
+    def deps_dir(self) -> Path:
+        return self.path / 'deps'
 
     def save_result(self, obj: T) -> datetime:
         path = self.result_path

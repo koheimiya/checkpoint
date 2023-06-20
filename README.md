@@ -240,6 +240,4 @@ Here is the list of the built-in properties/methods of `TaskBase`:
 | `clear_all_tasks`      | class    | method   | Clear the cache of the task class |
 
 ## TODO
-- [ ] Browse status and log inside task tree
-    - [ ] Log upstream tasks in the result directory
 - [ ] Task graph visualizer

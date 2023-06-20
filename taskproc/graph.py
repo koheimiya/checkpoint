@@ -2,11 +2,11 @@
 from __future__ import annotations
 from contextlib import ExitStack
 from datetime import datetime
-from typing import Any, Sequence
+from typing import Any, Mapping
 from typing_extensions import Self, runtime_checkable, Protocol
 from collections import defaultdict
 from dataclasses import dataclass
-from concurrent.futures import Future, ProcessPoolExecutor, ThreadPoolExecutor, wait, FIRST_COMPLETED, Executor
+from concurrent.futures import Future, ProcessPoolExecutor, wait, FIRST_COMPLETED, Executor
 from pathlib import Path
 import logging
 
@@ -34,7 +34,7 @@ class TaskHandlerProtocol(Protocol):
     @property
     def directory(self) -> Path: ...
     def to_tuple(self) -> TaskKey: ...
-    def get_prerequisites(self) -> Sequence[TaskHandlerProtocol]: ...
+    def get_prerequisites(self) -> Mapping[str, TaskHandlerProtocol]: ...
     def peek_timestamp(self) -> datetime | None: ...
     def set_result(self, on_child_process: bool) -> None: ...
     def log_error(self) -> None: ...
@@ -55,7 +55,7 @@ class TaskGraph:
             x = task.to_tuple()
             if x not in seen:
                 seen.add(x)
-                prerequisite_tasks = task.get_prerequisites()
+                prerequisite_tasks = list(task.get_prerequisites().values())
                 to_expand.extend(prerequisite_tasks)
                 G.add_node(x, task=task, timestamp=task.peek_timestamp(), source_timestamp=task.source_timestamp)
                 G.add_edges_from([(p.to_tuple(), x) for p in prerequisite_tasks])

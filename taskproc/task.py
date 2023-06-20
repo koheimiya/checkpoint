@@ -87,7 +87,10 @@ class TaskWorker(Generic[R]):
         self.config = config
         self.instance = instance
         self.arg_key = arg_key
-        self.dirobj = config.db.get_instance_dir(arg_key)
+        self.dirobj = config.db.get_instance_dir(
+                key=arg_key,
+                deps={k: w.dirobj.path for k, w in self.get_prerequisites().items()}
+                )
 
     @property
     def channels(self) -> tuple[str, ...]:
@@ -100,14 +103,18 @@ class TaskWorker(Generic[R]):
     def to_tuple(self) -> TaskKey:
         return (self.config.name, self.arg_key)
 
-    def get_prerequisites(self) -> Sequence[TaskWorker[Any]]:
+    def get_prerequisites(self) -> dict[str, TaskWorker[Any]]:
         cls = self.config.task_class
         inst = self.instance
-        prerequisites: list[TaskWorker[Any]] = []
-        for _, v in inspect.getmembers(cls):
+        prerequisites: dict[str, TaskWorker[Any]] = {}
+        for name, v in inspect.getmembers(cls):
             if isinstance(v, Req):
-                prerequisites.extend([task._task_worker for task in v.get_task_list(inst)])
-        assert all(isinstance(p, TaskWorker) for p in prerequisites)
+                for k, task in v.get_task_dict(inst).items():
+                    if k is None:
+                        prerequisites[f'{name}'] = task._task_worker
+                    else:
+                        prerequisites[f'{name}.{k}'] = task._task_worker
+        assert all(isinstance(p, TaskWorker) for p in prerequisites.values())
         return prerequisites
 
     def peek_timestamp(self) -> datetime | None:
@@ -475,7 +482,7 @@ class Req(Generic[T, R]):
         else:
             return get_result(x)
 
-    def get_task_list(self, obj: TaskBase[Any]) -> list[TaskBase[Any]]:
+    def get_task_dict(self, obj: TaskBase[Any]) -> dict[str | None, TaskBase[Any]]:
         x = getattr(obj, self.private_name, None)
         assert x is not None, f'Requirement `{self.public_name}` is not set in {obj}.'
 
@@ -483,13 +490,13 @@ class Req(Generic[T, R]):
             x = x.get_origin()
 
         if isinstance(x, TaskBase):
-            return [x]
+            return {None: x}
         elif isinstance(x, list):
-            return x
+            return {str(i): xi for i, xi in enumerate(x)}
         elif isinstance(x, dict):
-            return list(x.values())
+            return {str(k): v for k, v in x.items()}
         elif isinstance(x, Const):
-            return []
+            return {}
         else:
             raise TypeError(f'Unsupported requirement type: {type(x)}')
 
