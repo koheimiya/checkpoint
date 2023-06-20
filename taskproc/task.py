@@ -57,7 +57,7 @@ class TaskConfig(Generic[R]):
 
 
     @cached_property
-    def db(self) -> Database:
+    def db(self) -> Database[R]:
         return Database.make(name=self.name, compress_level=self.compress_level)
 
     @cached_property
@@ -87,6 +87,7 @@ class TaskWorker(Generic[R]):
         self.config = config
         self.instance = instance
         self.arg_key = arg_key
+        self.dirobj = config.db.get_instance_dir(arg_key)
 
     @property
     def channels(self) -> tuple[str, ...]:
@@ -111,13 +112,13 @@ class TaskWorker(Generic[R]):
 
     def peek_timestamp(self) -> datetime | None:
         try:
-            return self.config.db.load_timestamp(self.arg_key)
-        except KeyError:
+            # return self.config.db.load_timestamp(self.arg_key)
+            return self.dirobj.get_timestamp()
+        except RuntimeError:
             return None
 
     def set_result(self, on_child_process: bool = False) -> None:
-        if self.directory.exists():
-            shutil.rmtree(self.directory)
+        self.dirobj.initialize()
         self.run_and_save_instance_task(on_child_process=on_child_process)
 
     def log_error(self) -> None:
@@ -138,10 +139,12 @@ class TaskWorker(Generic[R]):
     def run_and_save_instance_task(self, on_child_process: bool) -> None:
         if self.config.interactive:
             res = self.instance.run_task()
-            self.config.db.save(self.arg_key, res)
+            # self.config.db.save(self.arg_key, res)
+            self.dirobj.save_result(res)
         elif on_child_process and self.config.prefix_command == '':
             res = self.run_instance_task_with_captured_output()
-            self.config.db.save(self.arg_key, res)
+            # self.config.db.save(self.arg_key, res)
+            self.dirobj.save_result(res)
         else:
             dir_ref = self.directory / 'tmp'
             if dir_ref.exists():
@@ -150,10 +153,10 @@ class TaskWorker(Generic[R]):
             try:
                 worker_path = Path(dir_ref) / 'worker.pkl'
                 pycmd = f"""import pickle
-                    worker = pickle.load(open("{worker_path}", "rb"))
-                    res = worker.run_instance_task_with_captured_output()
-                    worker.config.db.save(worker.arg_key, res)
-                """.replace('\n', ';')
+worker = pickle.load(open("{worker_path}", "rb"))
+res = worker.run_instance_task_with_captured_output()
+worker.dirobj.save_result(res)
+""".replace('\n', '; ')
 
                 with open(worker_path, 'wb') as worker_ref:
                     cloudpickle.dump(self, worker_ref)
@@ -195,7 +198,7 @@ class TaskWorker(Generic[R]):
 
     @property
     def task_id(self) -> int:
-        return self.config.db.id_table.get(self.arg_key)
+        return self.dirobj.task_id
 
     @property
     def task_args(self) -> dict[str, Any]:
@@ -207,45 +210,30 @@ class TaskWorker(Generic[R]):
 
     @property
     def stdout_path(self) -> Path:
-        return self.config.db.get_stdout_path(self.arg_key)
+        return self.dirobj.stdout_path
 
     @property
     def stderr_path(self) -> Path:
-        return self.config.db.get_stderr_path(self.arg_key)
+        return self.dirobj.stderr_path
 
     @property
     def directory(self) -> Path:
-        _, arg_str = self.to_tuple()
-        return self.config.db.get_result_dir(arg_str)
-
-    @property
-    def _data_directory_uninit(self) -> Path:
-        _, arg_str = self.to_tuple()
-        return self.config.db.get_data_dir(arg_str)
+        return self.dirobj.path
 
     @property
     def data_directory(self) -> Path:
-        out = self._data_directory_uninit
-        out.mkdir(exist_ok=True)
-        return out
+        return self.dirobj.data_dir
 
     def get_result(self) -> R:
         result_key = '_task__result_'
         res = getattr(self.instance, result_key, None)
         if res is None:
-            res = self.config.db.load(self.arg_key)
+            res = self.dirobj.load_result()
             setattr(self.instance, result_key, res)
         return res
 
     def clear(self) -> None:
-        db = self.config.db
-        try:
-            db.delete(self.arg_key)
-        except KeyError:
-            pass
-        directory = self.directory
-        if directory.exists():
-            shutil.rmtree(directory)
+        self.dirobj.delete()
 
 
 class TaskBase(Generic[R]):

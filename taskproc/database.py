@@ -60,30 +60,17 @@ class Database(Generic[T]):
     def __post_init__(self) -> None:
         self.results_directory.mkdir(exist_ok=True)
 
+    def get_instance_dir(self, key: Json) -> InstanceDirectory[T]:
+        return InstanceDirectory(
+                base_path=self.results_directory,
+                instance_id=self.id_table.get(key),
+                argkey=key,
+                compress_level=self.compress_level,
+                )
+
     @property
     def results_directory(self) -> Path:
         return Path(self.base_path) / 'results'
-
-    def get_result_dir(self, key: Json) -> Path:
-        taskid = self.id_table.get(key)
-        out = self.results_directory / f'{taskid}'
-        if not out.exists():
-            out.mkdir()
-            with open(out / 'args.json', 'w') as ref:
-                ref.write(key)
-        return out
-
-    def get_result_path(self, key: Json) -> Path:
-        return self.get_result_dir(key) / f'result.pkl.gz'
-
-    def get_stdout_path(self, key: Json) -> Path:
-        return self.get_result_dir(key) / f'stdout.txt'
-
-    def get_stderr_path(self, key: Json) -> Path:
-        return self.get_result_dir(key) / f'stderr.txt'
-
-    def get_data_dir(self, key: Json) -> Path:
-        return self.get_result_dir(key) / 'data'
 
     @property
     def source_path(self) -> Path:
@@ -102,39 +89,11 @@ class Database(Generic[T]):
     def load_source_timestamp(self) -> datetime:
         return _get_timestamp(self.source_path)
 
-    def save(self, key: Json, obj: T) -> datetime:
-        path = self.get_result_path(key)
-        with gzip.open(path, 'wb', compresslevel=self.compress_level) as ref:
-            cloudpickle.dump(obj, ref)
-        return _get_timestamp(path)
-
-    def load(self, key: Json) -> T:
-        path = self.get_result_path(key)
-        with gzip.open(path, 'rb') as ref:
-            return cloudpickle.load(ref)
-
-    def load_timestamp(self, key: Json) -> datetime:
-        path = self.get_result_path(key)
-        if path.exists():
-            return _get_timestamp(path)
-        else:
-            raise KeyError(key)
-
     def clear(self) -> None:
         self.id_table.clear()
         if self.results_directory.exists():
             shutil.rmtree(self.results_directory)
         self.results_directory.mkdir()
-
-    def delete(self, key: Json) -> None:
-        resdir = self.get_result_path(key)
-        if resdir.exists():
-            resdir.unlink()
-        else:
-            raise KeyError(key)
-        datadir = self.get_data_dir(key)
-        if datadir.exists():
-            shutil.rmtree(datadir)
 
 
 def _get_timestamp(path: Path) -> datetime:
@@ -142,30 +101,100 @@ def _get_timestamp(path: Path) -> datetime:
     return datetime.fromtimestamp(timestamp)
 
 
+class InstanceDirectory(Generic[T]):
+    def __init__(self, base_path: Path, instance_id: int, argkey: Json, compress_level: int):
+        self.base_path = base_path
+        self.task_id = instance_id
+        self.argkey = argkey
+        self.compress_level = compress_level
+        self.initialize()
+
+    def initialize(self):
+        if self.path.exists():
+            shutil.rmtree(self.path)
+        self.path.mkdir()
+        with open(self.args_path, 'w') as ref:
+            ref.write(self.argkey)
+        self.data_dir.mkdir()
+
+    @property
+    def path(self):
+        return self.base_path / str(self.task_id)
+
+    @property
+    def args_path(self) -> Path:
+        return self.path / 'args.json'
+
+    @property
+    def result_path(self) -> Path:
+        return self.path / f'result.pkl.gz'
+
+    @property
+    def stdout_path(self) -> Path:
+        return self.path / f'stdout.txt'
+
+    @property
+    def stderr_path(self) -> Path:
+        return self.path / f'stderr.txt'
+
+    @property
+    def data_dir(self) -> Path:
+        return self.path / 'data'
+
+    def save_result(self, obj: T) -> datetime:
+        path = self.result_path
+        with gzip.open(path, 'wb', compresslevel=self.compress_level) as ref:
+            cloudpickle.dump(obj, ref)
+        return _get_timestamp(path)
+
+    def load_result(self) -> T:
+        path = self.result_path
+        with gzip.open(path, 'rb') as ref:
+            return cloudpickle.load(ref)
+
+    def get_timestamp(self) -> datetime:
+        path = self.result_path
+        if self.result_path.exists():
+            return _get_timestamp(path)
+        else:
+            raise RuntimeError(f'Result not found: {self.result_path}')
+
+    def delete(self) -> None:
+        self.initialize()
+
+
 @dataclass
 class IdTable:
     def __init__(self, path: Path | str) -> None:
         self.table = dc.Cache(directory=path)
         self.lock = dc.Lock(self.table, 'global')
+        self.cache: dict[Any, int] = {}
     
     def get(self, x: Any) -> int:
-        with self.lock:
+        out = self.cache.get(x)
+        if out is not None:
+            return out
+
+        # with self.lock:
+        with self.table.transact():
             value = self.table.get(key=x)
             if value is None:
-                with self.table.transact():
-                    value = len(self.table)
-                    self.table.set(key=x, value=value)
-            return value
+                value = len(self.table)
+                self.table.set(key=x, value=value)
+
+        self.cache[x] = value
+        return value
 
     def __contains__(self, key: Any) -> bool:
-        with self.lock:
-            return key in self.table
+        # with self.lock:
+        return key in self.table
 
     def list_keys(self) -> list[str]:
-        with self.lock:
-            with self.table as ref:
-                return list(map(str, ref))
+        # with self.lock:
+        # with self.table as ref:
+        with self.table.transact():
+            return list(map(str, self.table))
 
     def clear(self) -> None:
-        with self.lock:
-            self.table.clear()
+        # with self.lock:
+        self.table.clear()

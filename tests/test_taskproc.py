@@ -1,4 +1,3 @@
-from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 import pytest
@@ -133,18 +132,18 @@ class GreetWithFile(TaskBase):
 def test_requires_directory():
     CreateFile.clear_all_tasks()
     GreetWithFile.clear_all_tasks()
-    taskdir_world = CreateFile('Hello, world!')._task_worker._data_directory_uninit
-    taskdir_me = CreateFile('Hello, me!')._task_worker._data_directory_uninit
+    taskdir_world = CreateFile('Hello, world!').task_directory
+    taskdir_me = CreateFile('Hello, me!').task_directory
 
     def check_output(name: str):
         assert GreetWithFile(name).run_graph() == f'Hello, {name}!'
 
-    assert not taskdir_world.exists()
-    assert not taskdir_me.exists()
+    assert not list(taskdir_world.iterdir())
+    assert not list(taskdir_me.iterdir())
     check_output('world')
     check_output('me')
-    assert taskdir_world.exists()
-    assert taskdir_me.exists()
+    assert list(taskdir_world.iterdir())
+    assert list(taskdir_me.iterdir())
 
     # Directories persist
     GreetWithFile.clear_all_tasks()
@@ -152,15 +151,15 @@ def test_requires_directory():
 
     # Specific task directory can be deleted
     CreateFile('Hello, world!').clear_task()
-    assert not taskdir_world.exists()       # task directory deleted
-    assert taskdir_me.exists()              # other task directories are not deleted
-    check_output('world')                   # file recreated
+    assert not list(taskdir_world.iterdir())  # task directory deleted
+    assert list(taskdir_me.iterdir())         # other task directories are not deleted
+    check_output('world')                     # file recreated
 
     # Task directory can be deleted at all
     CreateFile.clear_all_tasks()
-    assert not taskdir_world.exists()           # task directory deleted
-    assert not taskdir_me.exists()              # other task directories are also deleted
-    check_output('world')                       # file recreated
+    assert not taskdir_world.exists()    # task directory deleted
+    assert not taskdir_me.exists()       # other task directories are also deleted
+    check_output('world')                # file recreated
 
 
 class CountElem(TaskBase):
