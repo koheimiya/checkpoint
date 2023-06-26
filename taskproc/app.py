@@ -7,6 +7,7 @@ import logging
 import os
 
 import click
+import dotenv
 
 from taskproc.graph import FailedTaskError
 
@@ -52,6 +53,10 @@ def main(taskfile: Path,
         Context.cache_dir = cache_dir
     Context.detect_source_change = not disable_detect_source_change
 
+    if Context.get_envfile_path():
+        LOGGER.info('Loaded envfile at ' + Context.get_envfile_path())
+    Context.log_settings()
+
     if kwargs is None:
         kwargs = {}
     assert isinstance(kwargs, dict)
@@ -80,6 +85,8 @@ def main(taskfile: Path,
         os.system('stty sane')  # Fix broken tty after Popen with tricky command. Need some fix in the future.
         e.task.log_error()
         raise
+
+    LOGGER.debug(f"stats:\n{stats}")
 
     os.system('stty sane')  # Fix broken tty after Popen with tricky command. Need some fix in the future.
     if entrypoint_task.task_stdout.exists():

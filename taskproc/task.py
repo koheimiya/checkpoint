@@ -191,7 +191,6 @@ worker.dirobj.save_result(res)
             finally:
                 shutil.rmtree(dir_ref)
 
-
     def run_instance_task_with_captured_output(self) -> R:
         with ExitStack() as stack:
             stdout = stack.enter_context(open(self.stdout_path, 'w+'))

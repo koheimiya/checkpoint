@@ -216,7 +216,7 @@ We can use taskproc from commandline like `taskproc path/to/taskfile.py`, where 
 class Main(TaskBase):
     ...
 ```
-The command runs the `Main()` task and stores the cache right next to `taskfile.py` as `.cache/taskproc/...`.
+The command runs the `Main` task and stores the cache at `{$TP_CACHE_DIR:-./.cache}/taskproc/...`.
 Please refer to `taskproc --help` for more info.
 
 

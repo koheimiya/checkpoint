@@ -109,7 +109,8 @@ class InstanceDirectory(Generic[T]):
         self.argkey = argkey
         self.dependencies = dependencies
         self.compress_level = compress_level
-        self.initialize()
+        if not self.path.exists():
+            self.initialize()
 
     def initialize(self):
         if self.path.exists():

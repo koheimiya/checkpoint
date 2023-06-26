@@ -4,7 +4,11 @@ from typing_extensions import Literal, NewType, ParamSpec
 import os
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, Executor
 from pathlib import Path
+import logging
 import dotenv
+
+
+LOGGER = logging.getLogger(__name__)
 
 
 P = ParamSpec('P')
@@ -16,16 +20,14 @@ Runner = Callable[[], R]  # Delayed computation
 RunnerFactory = Callable[P, Runner[R]]
 
 
-
 dotenv.load_dotenv()
 
 
 class Context:
-    cache_dir = Path(os.getenv('TP_CACHE_DIR', './.cache'))
+    cache_dir = Path(os.getenv('TP_CACHE_DIR', './.cache')).resolve()
     executor_name = os.getenv('TP_EXECUTOR', 'process')
     max_workers = int(os.getenv('TP_MAX_WORKERS', -1))
     detect_source_change = bool(os.getenv('TP_DETECT_SOURCE_CHANGE', 0))
-    num_cpu = os.cpu_count()
 
     @classmethod
     def get_executor(cls, executor_name: Literal['process', 'thread'] | str | None = None, max_workers: int | None = None) -> Executor:
@@ -43,3 +45,18 @@ class Context:
             max_workers = cls.max_workers
 
         return executor_type(max_workers=max_workers)
+
+    @classmethod
+    def get_envfile_path(cls) -> str:
+        return dotenv.find_dotenv()
+
+    @classmethod
+    def log_settings(cls):
+        settings = {
+                'cache_dir': cls.cache_dir,
+                'executor': cls.executor_name,
+                'max_workers': cls.max_workers,
+                'detect_source_change': cls.detect_source_change,
+                'actual_max_workers': getattr(cls.get_executor(), '_max_workers'),
+                }
+        LOGGER.info(f'Setting: {settings}')
