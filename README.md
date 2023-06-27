@@ -1,7 +1,17 @@
 # taskproc
 
-A lightweight workflow building/execution/management tool written in pure Python.
+A lightweight pipeline building/execution/management tool written in pure Python.
 Internally, it depends on `DiskCache`, `cloudpickle` `networkx` and `concurrent.futures`.
+
+## Why `taskproc`?
+I needed a pipeline-handling library that is thin and flexible as much as possible.
+* `Luigi` is not flexible enough: The definition of the dependencies and the definition of the task computation is tightly coupled at `luigi.Task`s, 
+which is super cumbersome if one tries to edit the pipeline structure without changing the computation of each task.
+* `Airflow` is too big and clumsy: It requires a message broker backend separately installed and run in background. It is also incompatible with non-pip package manager (such as Poetry).
+* Most of the existing libraries tend to build their own ecosystems that unnecessarily forces the user to follow the specific way of handling pipelines.
+
+`taskproc` aims to provide a language construct for defining computation by composition, ideally as simple as Python's built-in sytax of functions, with support of automatic parallel execution and cache management.  
+
 #### Features
 * Decomposing long and complex computation into tasks, i.e., smaller units of work with dependencies.
 * Executing them in a distributed way, supporting multithreading/multiprocessing and local container/cluster-based dispatching.
@@ -11,6 +21,7 @@ Internally, it depends on `DiskCache`, `cloudpickle` `networkx` and `concurrent.
 * Periodic scheduling
 * Automatic retry
 * External service integration (GCP, AWS, ...)
+* Graphical user interface
 
 ## Installation
 
@@ -18,12 +29,15 @@ Internally, it depends on `DiskCache`, `cloudpickle` `networkx` and `concurrent.
 pip install taskproc
 ```
 
-## Usage
+## Example
+See [here](examples/ml_taskfile.py) for typical usage of `taskproc`.
 
-### Basic usage
+## Documentation
 
-Workflow is a directed acyclic graph (DAG) of tasks, and task is a unit of work represented with a class.
-Each task and its upstream dependencies are specified with a class definition:
+### Defining task
+
+Pipeline is a directed acyclic graph (DAG) of tasks with a single sink node (i.e., final task), where task is a unit of work represented with a class.
+Each task and its upstream dependencies are specified with a class definition like so:
 ```python
 from taskproc import TaskBase, Requires, Const
 
@@ -38,7 +52,7 @@ class Choose(TaskBase):
     def __init__(self, n: int, k: int):
         # The upstream tasks and the other instance attributes are prepared here.
         # It thus recursively defines all the tasks we need to run this task,
-        # i.e., the entire upstream workflow.
+        # i.e., the entire upstream pipeline.
 
         if 0 < k < n:
             self.prev1 = Choose(n - 1, k - 1)
