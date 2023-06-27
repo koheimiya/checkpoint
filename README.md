@@ -10,7 +10,7 @@ which is super cumbersome if one tries to edit the pipeline structure without ch
 * `Airflow` is too big and clumsy: It requires a message broker backend separately installed and run in background. It is also incompatible with non-pip package manager (such as Poetry).
 * Most of the existing libraries tend to build their own ecosystems that unnecessarily forces the user to follow the specific way of handling pipelines.
 
-`taskproc` aims to provide a language construct for defining computation by composition, ideally as simple as Python's built-in sytax of functions, with support of automatic parallel execution and cache management.  
+`taskproc` aims to provide a language construct for defining computation by composition, ideally as simple as Python's built-in sytax of functions, with the support of automatic and configurable parallel execution and cache management.  
 
 #### Features
 * Decomposing long and complex computation into tasks, i.e., smaller units of work with dependencies.
@@ -30,7 +30,7 @@ pip install taskproc
 ```
 
 ## Example
-See [here](examples/ml_taskfile.py) for typical usage of `taskproc`.
+See [here](examples/ml_taskfile.py) for a typical usage of `taskproc`.
 
 ## Documentation
 
@@ -157,9 +157,8 @@ class DownstreamTask(TaskBase):
 ### Data directories
 
 Use `task.task_directory` to get a fresh path dedicated to each task.
-The directory is automatically created at
-`{$TP_CACHE_DIR:-./.cache}/taskproc/{module_name}.{task_name}/data/{task_id}`
-and the contents of the directory are cleared at each task call and persist until the task is cleared.
+The directory is automatically created and managed along with the task cache:
+The contents of the directory are cleared at each task call and persist until the task is cleared.
 ```python
 class TrainModel(TaskBase):
     def run_task(self) -> str:
@@ -235,7 +234,7 @@ Please refer to `taskproc --help` for more info.
 
 
 ### Built-in properties
-Here is the list of the built-in properties/methods of `TaskBase`:
+Below is the list of the built-in properties/methods of `TaskBase`. Do not override these attributes in the subclass.
 
 | Name | Owner | Type | Description |
 |--|--|--|--|
