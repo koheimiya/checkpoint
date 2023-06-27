@@ -1,17 +1,9 @@
+from typing import NewType
 from taskproc import TaskBase, Task, Requires, RequiresList
 
 
-# Dummy types for demonstration
-class DummyObject:
-    def __init__(self, deps: list['DummyObject'], label: str):
-        self.deps = deps
-        self.label = label
-
-    def astuple(self):
-        return ([d.astuple() for d in self.deps], self.label)
-
-class Data(DummyObject): ...
-class Model(DummyObject): ...
+Data = NewType('Data', str)
+Model = NewType('Model', str)
 
 
 class LoadData(TaskBase):
@@ -19,7 +11,7 @@ class LoadData(TaskBase):
         self.name = name
 
     def run_task(self) -> Data:
-        return Data([], 'raw data')
+        return Data('raw data')
 
 
 class PreprocessData(TaskBase):
@@ -32,9 +24,9 @@ class PreprocessData(TaskBase):
         self.raw_data = LoadData(name)
 
     def run_task(self) -> dict[str, Data]:
-        train = Data([self.raw_data], f'train data ({self.name}, {self.split_ratio}, {self.seed})')
-        valid = Data([self.raw_data], f'valid data ({self.name}, {self.split_ratio}, {self.seed})')
-        test  = Data([self.raw_data], f'test data ({self.name}, {self.split_ratio}, {self.seed})')
+        train = Data(f'train data ({self.name}, {self.split_ratio}, {self.seed})')
+        valid = Data(f'valid data ({self.name}, {self.split_ratio}, {self.seed})')
+        test  = Data(f'test data ({self.name}, {self.split_ratio}, {self.seed})')
         return {'train': train, 'valid': valid, 'test': test}
 
 
@@ -49,7 +41,7 @@ class TrainModel(TaskBase):
         self.seed = seed
     
     def run_task(self) -> Model:
-        model = Model([self.train_data, self.valid_data], f"trained model ({self.train_config}, {self.seed})")
+        model = Model(f"trained model ({self.train_config}, {self.seed})")
         return model
 
 
@@ -61,12 +53,12 @@ class TestModel(TaskBase):
         self.test_data = test
         self.model = trained_model
     
-    def run_task(self) -> dict[str, DummyObject]:
-        return {'score': DummyObject([self.test_data, self.model], "score")}
+    def run_task(self) -> dict[str, float]:
+        return {'score': 42}
 
 
 class Main(TaskBase):
-    results: RequiresList[dict[str, DummyObject]]
+    results: RequiresList[dict[str, float]]
 
     def __init__(self):
         tasks: list[Task[dict]] = []
@@ -86,7 +78,6 @@ class Main(TaskBase):
         self.results = tasks
 
     def run_task(self) -> None:
-        from pprint import pprint
         print('Running main')
-        pprint({k: v.astuple() for k, v in self.results[0].items()})
-        return
+        scores = [res['score'] for res in self.results]
+        print(scores)
