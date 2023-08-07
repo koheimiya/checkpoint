@@ -252,4 +252,5 @@ Below is the list of the built-in properties/methods of `TaskBase`. Do not overr
 | `clear_all_tasks`      | class    | method   | Clear the cache of the task class |
 
 ## TODO
+- [ ] Queue-wise prefix allocation
 - [ ] Task graph visualizer
