@@ -253,4 +253,5 @@ Below is the list of the built-in properties/methods of `TaskBase`. Do not overr
 
 ## TODO
 - [ ] Queue-wise prefix allocation
+- [ ] Add local executor
 - [ ] Task graph visualizer
