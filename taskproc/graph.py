@@ -208,7 +208,11 @@ def run_task_graph(
                             execute_locally=isinstance(executor, ProcessPoolExecutor),
                             force_interactive=force_interactive,
                             )
-                    future = executor.submit(runner)
+                    if not force_interactive:
+                        future = executor.submit(runner)
+                    else:
+                        future = Future()
+                        future.set_result(runner())
                     in_process[future] = key
 
             # Wait for the first tasks to complete
