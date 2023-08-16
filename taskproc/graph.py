@@ -144,8 +144,8 @@ def run_task_graph(
     """ Consume task graph concurrently.
     """
     interactive_tasks = graph.interactive_tasks()
-    if interactive_tasks and isinstance(executor, ProcessPoolExecutor):
-        LOGGER.warning(f'Interactive task is detected while the executor is ProcessPoolExecutor: {interactive_tasks!r}. Override it with ThreadPoolExecutor.')
+    if (interactive_tasks or force_interactive) and isinstance(executor, ProcessPoolExecutor):
+        LOGGER.warning(f'Interactive mode is detected while the executor is ProcessPoolExecutor: {interactive_tasks!r}, {force_interactive=}. Override it with ThreadPoolExecutor.')
         executor = Context.get_executor(executor_name='thread')
     if interactive_tasks and show_progress:
         LOGGER.warning(f'Interactive task is detected while `show_progress` is set True. The progress bars may interfere with the task output.')
