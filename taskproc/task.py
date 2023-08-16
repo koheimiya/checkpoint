@@ -124,9 +124,9 @@ class TaskWorker(Generic[R]):
         except RuntimeError:
             return None
 
-    def set_result(self, on_child_process: bool = False) -> None:
+    def set_result(self, execute_locally: bool = False, force_interactive: bool  = False) -> None:
         self.dirobj.initialize()
-        self.run_and_save_instance_task(on_child_process=on_child_process)
+        self.run_and_save_instance_task(execute_locally=execute_locally, force_interactive=force_interactive)
 
     def log_error(self) -> None:
         if not self.config.interactive:
@@ -143,12 +143,14 @@ class TaskWorker(Generic[R]):
             with open(self.stderr_path) as f:
                 LOGGER.error(f.read())
 
-    def run_and_save_instance_task(self, on_child_process: bool) -> None:
-        if self.config.interactive:
+    def run_and_save_instance_task(self, execute_locally: bool, force_interactive: bool) -> None:
+        if self.config.interactive or force_interactive:
+            if self.config.prefix_command:
+                LOGGER.warning(f'Ignore prefix command and enter interactive mode. {self.config.prefix_command=}')
             res = self.instance.run_task()
             # self.config.db.save(self.arg_key, res)
             self.dirobj.save_result(res)
-        elif on_child_process and self.config.prefix_command == '':
+        elif execute_locally and self.config.prefix_command == '':
             res = self.run_instance_task_with_captured_output()
             # self.config.db.save(self.arg_key, res)
             self.dirobj.save_result(res)
@@ -336,6 +338,7 @@ class TaskBase(Generic[R]):
             rate_limits: dict[str, int] | None = None,
             detect_source_change: bool | None = None,
             show_progress: bool = False,
+            force_interactive: bool = False,
             ) -> T:
         assert isinstance(self, TaskBase)
         return self.run_graph_with_stats(
@@ -344,6 +347,7 @@ class TaskBase(Generic[R]):
                 rate_limits=rate_limits,
                 detect_source_change=detect_source_change,
                 show_progress=show_progress,
+                force_interactive=force_interactive,
                 )[0]
 
     def run_graph_with_stats(
@@ -354,6 +358,7 @@ class TaskBase(Generic[R]):
             detect_source_change: bool | None = None,
             dump_generations: bool = False,
             show_progress: bool = False,
+            force_interactive: bool = False,
             ) -> tuple[T, dict[str, Any]]:
         assert isinstance(self, TaskBase)
         if detect_source_change is None:
@@ -365,7 +370,14 @@ class TaskBase(Generic[R]):
         else:
             assert max_workers is None
 
-        stats = run_task_graph(graph=graph, executor=executor, rate_limits=rate_limits, dump_graphs=dump_generations, show_progress=show_progress)
+        stats = run_task_graph(
+                graph=graph,
+                executor=executor,
+                rate_limits=rate_limits,
+                dump_graphs=dump_generations,
+                show_progress=show_progress,
+                force_interactive=force_interactive,
+                )
         return self._task_worker.get_result(), stats
 
     def get_task_result(self) -> R:

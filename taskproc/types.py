@@ -28,6 +28,7 @@ class Context:
     executor_name = os.getenv('TP_EXECUTOR', 'process')
     max_workers = int(os.getenv('TP_MAX_WORKERS', -1))
     detect_source_change = bool(os.getenv('TP_DETECT_SOURCE_CHANGE', 0))
+    interactive = bool(os.getenv('TP_INTERACTIVE', 0))
 
     @classmethod
     def get_executor(cls, executor_name: Literal['process', 'thread'] | str | None = None, max_workers: int | None = None) -> Executor:
@@ -58,5 +59,6 @@ class Context:
                 'max_workers': cls.max_workers,
                 'detect_source_change': cls.detect_source_change,
                 'actual_max_workers': getattr(cls.get_executor(), '_max_workers'),
+                'interactive': cls.interactive,
                 }
         LOGGER.info(f'Setting: {settings}')

@@ -36,7 +36,7 @@ class TaskHandlerProtocol(Protocol):
     def to_tuple(self) -> TaskKey: ...
     def get_prerequisites(self) -> Mapping[str, TaskHandlerProtocol]: ...
     def peek_timestamp(self) -> datetime | None: ...
-    def set_result(self, on_child_process: bool) -> None: ...
+    def set_result(self, execute_locally: bool, force_interactive: bool) -> None: ...
     def log_error(self) -> None: ...
 
 
@@ -139,6 +139,7 @@ def run_task_graph(
         rate_limits: dict[str, int] | None = None,
         dump_graphs: bool = False,
         show_progress: bool = False,
+        force_interactive: bool = False,
         ) -> dict[str, Any]:
     """ Consume task graph concurrently.
     """
@@ -201,7 +202,13 @@ def run_task_graph(
                     to_submit = keys
 
                 for key in to_submit:
-                    future = executor.submit(_run_task, queue, cloudpickle.dumps(graph.get_task(key)), isinstance(executor, ProcessPoolExecutor))
+                    runner = _TaskRunner(
+                            queue=queue,
+                            task_data=cloudpickle.dumps(graph.get_task(key)),
+                            execute_locally=isinstance(executor, ProcessPoolExecutor),
+                            force_interactive=force_interactive,
+                            )
+                    future = executor.submit(runner)
                     in_process[future] = key
 
             # Wait for the first tasks to complete
@@ -235,10 +242,10 @@ def run_task_graph(
     return info
 
 
-def _run_task(queue: ChannelLabels, task_data: bytes, on_child_process: bool) -> tuple[ChannelLabels, TaskKey]:  # queue, (dbname, key)
+def _run_task(queue: ChannelLabels, task_data: bytes, execute_locally: bool, force_interactive: bool) -> tuple[ChannelLabels, TaskKey]:  # queue, (dbname, key)
     task = cloudpickle.loads(task_data)
     assert isinstance(task, TaskHandlerProtocol)
-    task.set_result(on_child_process=on_child_process)
+    task.set_result(execute_locally=execute_locally, force_interactive=force_interactive)
     return queue, task.to_tuple()
 
 
@@ -255,3 +262,17 @@ def try_getting_result(future: Future[tuple[ChannelLabels, TaskKey]], task_key: 
     except Exception as e:
         task = graph.get_task(task_key)
         raise FailedTaskError(task, e, msg=f'Exception occurred in {task_key}, see logs at {str(task.directory)}') from e
+
+
+@dataclass
+class _TaskRunner:
+    queue: ChannelLabels
+    task_data: bytes
+    execute_locally: bool
+    force_interactive: bool
+
+    def __call__(self) -> tuple[ChannelLabels, TaskKey]:
+        task = cloudpickle.loads(self.task_data)
+        assert isinstance(task, TaskHandlerProtocol)
+        task.set_result(execute_locally=self.execute_locally, force_interactive=self.force_interactive)
+        return self.queue, task.to_tuple()

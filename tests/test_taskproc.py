@@ -252,3 +252,21 @@ def test_sleep_task():
     task5.run_graph()
     elapsed = time.perf_counter() - start
     assert elapsed < 2
+
+
+class InteractiveJob(TaskBase):
+    def run_task(self) -> None:
+        print('world')
+        return
+
+
+def test_prefix_command(capsys):
+    InteractiveJob.clear_all_tasks()
+    task = InteractiveJob()
+    task.run_graph(executor=ThreadPoolExecutor(max_workers=1), force_interactive=True)
+    captured = capsys.readouterr()
+    assert captured.out == 'world\n'
+    assert captured.err == ''
+
+    assert not task.task_stdout.exists()
+    assert not task.task_stderr.exists()

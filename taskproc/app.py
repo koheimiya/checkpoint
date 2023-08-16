@@ -23,6 +23,7 @@ LOGGER = logging.getLogger(__name__)
 @click.option('-e', '--entrypoint', default='Main', help='Task name for entrypoint.')
 @click.option('-t', '--exec-type', type=click.Choice(['process', 'thread']), default=None)
 @click.option('-w', '--max-workers', type=int, default=None)
+@click.option('-i', '--interactive', is_flag=True)
 @click.option('--kwargs', type=json.loads, default=None, help='Parameters of entrypoint.')
 @click.option('--cache-dir', type=Path, default=None, help='Change cache directory. Default to taskfile.parent / ".cache".')
 @click.option('--rate-limits', type=json.loads, default=None, help='JSON dictionary for rate_limits.')
@@ -34,6 +35,7 @@ def main(taskfile: Path,
          entrypoint: str,
          exec_type: str | None,
          max_workers: int | None,
+         interactive: bool,
          kwargs: dict[str, Any] | None,
          cache_dir: Path | None,
          rate_limits: dict[str, Any] | None,
@@ -52,6 +54,7 @@ def main(taskfile: Path,
     if cache_dir is not None:
         Context.cache_dir = cache_dir
     Context.detect_source_change = not disable_detect_source_change
+    Context.interactive = interactive
 
     if Context.get_envfile_path():
         LOGGER.info('Loaded envfile at ' + Context.get_envfile_path())
@@ -80,7 +83,7 @@ def main(taskfile: Path,
     if not dont_force_entrypoint:
         entrypoint_task.clear_task()
     try:
-        _, stats = entrypoint_task.run_graph_with_stats(rate_limits=rate_limits, show_progress=not dont_show_progress)
+        _, stats = entrypoint_task.run_graph_with_stats(rate_limits=rate_limits, show_progress=not dont_show_progress, force_interactive=Context.interactive)
     except FailedTaskError as e:
         os.system('stty sane')  # Fix broken tty after Popen with tricky command. Need some fix in the future.
         e.task.log_error()
