@@ -252,6 +252,7 @@ Below is the list of the built-in properties/methods of `TaskBase`. Do not overr
 | `clear_all_tasks`      | class    | method   | Clear the cache of the task class |
 
 ## TODO
+- [ ] Disable progress bar in interactive mode
 - [ ] Error message for unset requirements
 - [ ] Include path to the task file in the cache path
 - [ ] CLI interface for clearing cache
