@@ -246,13 +246,6 @@ def run_task_graph(
     return info
 
 
-def _run_task(queue: ChannelLabels, task_data: bytes, execute_locally: bool, force_interactive: bool) -> tuple[ChannelLabels, TaskKey]:  # queue, (dbname, key)
-    task = cloudpickle.loads(task_data)
-    assert isinstance(task, TaskHandlerProtocol)
-    task.set_result(execute_locally=execute_locally, force_interactive=force_interactive)
-    return queue, task.to_tuple()
-
-
 class FailedTaskError(Exception):
     def __init__(self, task: TaskHandlerProtocol, exception: Exception, msg: str):
         super().__init__(msg)
