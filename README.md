@@ -252,11 +252,11 @@ Below is the list of the built-in properties/methods of `TaskBase`. Do not overr
 | `clear_all_tasks`      | class    | method   | Clear the cache of the task class |
 
 ## TODO
+- [ ] Make the decorator for caching `__init__`.
+- [ ] Add `.parse_arg()` function to activate CLI argument parsing
 - [ ] Disable progress bar in interactive mode
-- [ ] Error message for unset requirements
-- [ ] Include path to the task file in the cache path
-- [ ] CLI interface for clearing cache
+- [ ] Error message for unset `Requires`.
+- [ ] Make the cache path argument explicit and the resulting directories visible.
 - [ ] Queue-wise prefix allocation
-- [ ] Get current queue inside task
 - [ ] Add local executor
 - [ ] Task graph visualizer
