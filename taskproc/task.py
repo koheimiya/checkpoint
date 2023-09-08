@@ -51,10 +51,10 @@ class TaskConfig(Generic[R]):
         self.prefix_command = prefix_command
         self.worker_registry: dict[Json, TaskWorker[R]] = {}
 
-
     @cached_property
     def db(self) -> Database[R]:
-        return Database.make(name=self.name, compress_level=self.compress_level)
+        cache_path = Context.cache_dir
+        return Database.make(cache_path=cache_path, name=self.name, compress_level=self.compress_level)
 
     @cached_property
     def source_timestamp(self) -> datetime:
@@ -121,14 +121,6 @@ class TaskWorker(Generic[R]):
         except RuntimeError:
             return None
 
-    def set_result(self, execute_locally: bool = False, force_interactive: bool = False, prefix_command: str | None = None) -> None:
-        self.dirobj.initialize()
-        self.run_and_save_instance_task(
-                execute_locally=execute_locally,
-                force_interactive=force_interactive,
-                prefix_command=prefix_command,
-                )
-
     def log_error(self) -> None:
         task_info = {
                 'name': self.config.name,
@@ -143,7 +135,8 @@ class TaskWorker(Generic[R]):
         with open(self.stderr_path) as f:
             LOGGER.error(f.read())
 
-    def run_and_save_instance_task(self, execute_locally: bool, force_interactive: bool, prefix_command: str | None = None) -> None:
+    def set_result(self, execute_locally: bool, force_interactive: bool, prefix_command: str | None = None) -> None:
+        self.dirobj.initialize()
         prefix = prefix_command if prefix_command is not None else self.config.prefix_command
         if force_interactive:
             if prefix:
