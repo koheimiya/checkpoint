@@ -37,3 +37,8 @@ taskproc = "taskproc.app:main"
 [project.group.dev.dependencies]
 pytest = "^7.3.1"
 snakeviz = "^2.2.0"
+
+[project.optional-dependencies]
+dev = [
+    "pudb>=2022.1.3",
+]

@@ -1,13 +1,13 @@
 from __future__ import annotations
 from collections.abc import Iterable
 from contextlib import redirect_stderr, redirect_stdout, ExitStack
-from typing import Callable, Generic, Mapping, Protocol, Sequence, Type, TypeVar, Any, cast
-from typing_extensions import ParamSpec, Self, get_origin, overload
+from typing import Callable, Concatenate, Generic, Mapping, Protocol, Sequence, Type, TypeVar, Any, cast
+from typing_extensions import ParamSpec, get_origin, overload
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from concurrent.futures import Executor
-from functools import cached_property, wraps
+from functools import cached_property
 import ast
 import logging
 import inspect
@@ -71,18 +71,6 @@ class TaskConfig(Generic[R]):
 
 
 class TaskWorker(Generic[R]):
-    @classmethod
-    def make(cls, task_config: TaskConfig[R], task_instance: TaskBase[R], *args: Any, **kwargs: Any) -> Self:
-        arg_key = _serialize_arguments(task_instance._build_task, *args, **kwargs)
-        worker = task_config.worker_registry.get(arg_key, None)
-        if worker is not None:
-            return worker
-
-        task_instance._build_task(*args, **kwargs)
-        worker = TaskWorker[R](config=task_config, instance=task_instance, arg_key=arg_key)
-        task_config.worker_registry[arg_key] = worker
-        return worker
-
     def __init__(self, config: TaskConfig[R], instance: TaskBase[R], arg_key: Json) -> None:
         self.config = config
         self.instance = instance
@@ -244,18 +232,25 @@ worker.dirobj.save_result(res)
         self.dirobj.delete()
 
 
+def wrap_task_init(init_method: Callable[Concatenate[TaskBase[R], P], None]) -> Callable[Concatenate[TaskBase[R], P], None]:
+    def wrapped_init(self: TaskBase, *args: P.args, **kwargs: P.kwargs) -> None:
+        config = self._task_config
+        arg_key = _serialize_arguments(self.__init__, *args, **kwargs)
+        worker = config.worker_registry.get(arg_key, None)
+        if worker is None:
+            init_method(self, *args, **kwargs)
+            worker = TaskWorker[R](config=config, instance=self, arg_key=arg_key)
+            config.worker_registry[arg_key] = worker
+        self._task_worker = worker
+        return 
+    return wrapped_init
+
+
 class TaskBase(Generic[R]):
     _task_config: TaskConfig[R]
+    _task_worker: TaskWorker[R]
 
     def __init__(self) -> None:
-        ...
-
-    def __task_init__(self, *args: Any, **kwargs: Any) -> None:
-        self._task_worker: TaskWorker[R] = TaskWorker.make(
-                self._task_config, self, *args, **kwargs
-                )
-
-    def _build_task(self, *args: Any, **kwargs: Any) -> None:
         ...
 
     def run_task(self) -> R:
@@ -295,8 +290,7 @@ class TaskBase(Generic[R]):
                 )
 
         # Swap initializer to make __init__ lazy
-        cls._build_task = cls.__init__  # type: ignore
-        cls.__init__ = wraps(cls._build_task)(cls.__task_init__)
+        cls.__init__ = wrap_task_init(cls.__init__)  # type: ignore
         super().__init_subclass__(**kwargs)
 
     @classmethod
