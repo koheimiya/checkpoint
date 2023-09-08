@@ -2,7 +2,6 @@
 from __future__ import annotations
 from contextlib import ExitStack
 from datetime import datetime
-from sys import prefix
 from typing import Any, Mapping
 from typing_extensions import Self, runtime_checkable, Protocol
 from collections import defaultdict
@@ -15,7 +14,7 @@ from tqdm.auto import tqdm
 import cloudpickle
 import networkx as nx
 
-from .types import Json, TaskKey, Context
+from .types import Json, TaskKey
 
 
 LOGGER = logging.getLogger(__name__)
@@ -140,9 +139,8 @@ def run_task_graph(
         ) -> dict[str, Any]:
     """ Consume task graph concurrently.
     """
-    if force_interactive and isinstance(executor, ProcessPoolExecutor):
+    if force_interactive:
         LOGGER.warning(f'Interactive mode is detected. Concurrent execution is disabled.')
-        executor = Context.get_executor(executor_name='thread')
     if force_interactive and show_progress:
         show_progress = False
         LOGGER.warning(f'Interactive task is detected while `show_progress` is set True. The progress bars is turned off.')

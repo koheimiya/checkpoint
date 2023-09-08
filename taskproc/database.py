@@ -10,7 +10,6 @@ import gzip
 import cloudpickle
 import diskcache as dc
 
-from .types import Context
 from .types import Json
 
 

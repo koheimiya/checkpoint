@@ -6,8 +6,10 @@ from typing_extensions import ParamSpec, get_origin, overload
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from concurrent.futures import Executor
+from concurrent.futures import Executor, ProcessPoolExecutor
 from functools import cached_property
+import argparse
+import os
 import ast
 import logging
 import inspect
@@ -20,7 +22,7 @@ import sys
 
 from .types import Json, TaskKey, Context
 from .database import Database
-from .graph import TaskGraph, run_task_graph
+from .graph import TaskGraph, run_task_graph, FailedTaskError
 
 
 LOGGER = logging.getLogger(__name__)
@@ -236,13 +238,18 @@ worker.dirobj.save_result(res)
 
 def wrap_task_init(init_method: Callable[Concatenate[TaskBase[R], P], None]) -> Callable[Concatenate[TaskBase[R], P], None]:
     def wrapped_init(self: TaskBase, *args: P.args, **kwargs: P.kwargs) -> None:
-        config = self._task_config
+        config = self.task_config
         arg_key = _serialize_arguments(self.__init__, *args, **kwargs)
         worker = config.worker_registry.get(arg_key, None)
-        if worker is None:
-            init_method(self, *args, **kwargs)
-            worker = TaskWorker[R](config=config, instance=self, arg_key=arg_key)
-            config.worker_registry[arg_key] = worker
+        # Reuse registered if exists
+        if worker is not None:
+            self._task_worker = worker
+            return
+
+        # Initialize instance
+        init_method(self, *args, **kwargs)
+        worker = TaskWorker[R](config=config, instance=self, arg_key=arg_key)
+        config.worker_registry[arg_key] = worker
         self._task_worker = worker
         return 
     return wrapped_init
@@ -251,6 +258,9 @@ def wrap_task_init(init_method: Callable[Concatenate[TaskBase[R], P], None]) -> 
 class TaskBase(Generic[R]):
     _task_config: TaskConfig[R]
     _task_worker: TaskWorker[R]
+    _task_compress_level: int = 9
+    _task_prefix_command: str = ''
+    _task_channel: str | Sequence[str] | None = None
 
     def __init__(self) -> None:
         ...
@@ -259,7 +269,26 @@ class TaskBase(Generic[R]):
         ...
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
-        _channel = kwargs.pop('channel', None)
+        # Fill missing requirement
+        ann = inspect.get_annotations(cls, eval_str=True)
+        for k, v in ann.items():
+            if get_origin(v) is Req and getattr(cls, k, None) is None:
+                req = Req()
+                req.__set_name__(None, k)
+                setattr(cls, k, req)
+
+        # Wrap initializer to make __init__ lazy
+        cls.__init__ = wrap_task_init(cls.__init__)  # type: ignore
+        super().__init_subclass__(**kwargs)
+
+    @classmethod
+    @property
+    def task_config(cls) -> TaskConfig[R]:
+        config = getattr(cls, '_task_config', None)
+        if config is not None:
+            return config
+
+        _channel = cls._task_channel
         channels: tuple[str, ...]
         if isinstance(_channel, str):
             channels = (_channel,)
@@ -270,28 +299,14 @@ class TaskBase(Generic[R]):
             channels = tuple()
         else:
             raise ValueError('Invalid channel value:', _channel)
-
-        compress_level = kwargs.pop('compress_level', 9)
-        prefix_command = kwargs.pop('prefix_command', '')
-
-        # Fill missing requirement
-        ann = inspect.get_annotations(cls, eval_str=True)
-        for k, v in ann.items():
-            if get_origin(v) is Req and getattr(cls, k, None) is None:
-                req = Req()
-                req.__set_name__(None, k)
-                setattr(cls, k, req)
-
-        cls._task_config = TaskConfig(
+        config = TaskConfig(
                 task_class=cls,
                 channels=channels,
-                compress_level=compress_level,
-                prefix_command=prefix_command,
+                compress_level=cls._task_compress_level,
+                prefix_command=cls._task_prefix_command,
                 )
-
-        # Swap initializer to make __init__ lazy
-        cls.__init__ = wrap_task_init(cls.__init__)  # type: ignore
-        super().__init_subclass__(**kwargs)
+        cls._task_config = config
+        return config
 
     @classmethod
     @property
@@ -320,7 +335,11 @@ class TaskBase(Generic[R]):
 
     @classmethod
     def clear_all_tasks(cls) -> None:
-        cls._task_config.clear_all()
+        try:
+            cls._task_config.clear_all()
+        except AttributeError:
+            cls.task_config.clear_all()
+            pass
 
     def clear_task(self) -> None:
         self._task_worker.clear()
@@ -328,23 +347,18 @@ class TaskBase(Generic[R]):
     def run_graph(
             self, *,
             executor: Executor | None = None,
-            max_workers: int | None = None,
             rate_limits: dict[str, int] | None = None,
-            detect_source_change: bool | None = None,
+            detect_source_change: bool = False,
             dump_generations: bool = False,
             show_progress: bool = False,
             force_interactive: bool = False,
             prefixes: dict[str, str] | None = None,
             ) -> tuple[R, dict[str, Any]]:
         assert isinstance(self, TaskBase)
-        if detect_source_change is None:
-            detect_source_change = Context.detect_source_change
         graph = TaskGraph.build_from(self._task_worker, detect_source_change=detect_source_change)
 
         if executor is None:
-            executor = Context.get_executor(max_workers=max_workers)
-        else:
-            assert max_workers is None
+            executor = ProcessPoolExecutor()
 
         stats = run_task_graph(
                 graph=graph,
@@ -356,6 +370,10 @@ class TaskBase(Generic[R]):
                 prefixes=prefixes,
                 )
         return self._task_worker.get_result(), stats
+
+    @classmethod
+    def run_graph_with_args(cls, args: Sequence[str] | None = None, defaults: argparse.Namespace | None = None) -> None:
+        _run_with_args(cls, args=args, defaults=defaults)
 
     def get_task_result(self) -> R:
         return self._task_worker.get_result()
@@ -498,3 +516,66 @@ Task = RealTask[R] | Const[R]
 Requires = Req[Task[R], R]
 RequiresList = Req[Sequence[Task[R]], list[R]]
 RequiresDict = Req[Mapping[K, Task[R]], dict[K, R]]
+
+
+def _run_with_args(
+        task_class: Type[TaskBase[Any]],
+        args: Sequence[str] | None,
+        defaults: argparse.Namespace | None,
+        ) -> None:
+    if defaults is None:
+        params = argparse.Namespace()
+    else:
+        params = defaults
+    parser = argparse.ArgumentParser()
+    parser.add_argument('result_dir', type=Path, help='Path to result directory.')       
+    parser.add_argument('-e', '--entrypoint', default='Main', help='Task name for entrypoint.')                                              
+    parser.add_argument('-t', '--exec-type', choices=['process', 'thread'], default=None)                                         
+    parser.add_argument('-w', '--max-workers', type=int, default=None)                                                                       
+    parser.add_argument('-i', '--interactive', action='store_true')                                                                                 
+    parser.add_argument('-D', '--disable-detect-source-change', action='store_true', help='Disable automatic source change detection based on AST.')
+    parser.add_argument('-l', '--loglevel', choices=['debug', 'info', 'warning', 'error'], default='warning')                     
+    parser.add_argument('--kwargs', type=json.loads, default=None, help='Parameters of entrypoint.')                                         
+    parser.add_argument('--rate-limits', type=json.loads, default=None, help='JSON dictionary for rate_limits.')                             
+    parser.add_argument('--dont-force-entrypoint', action='store_true', help='Do nothing if the cache of the entripoint task is up-to-date.')       
+    parser.add_argument('--dont-show-progress', action='store_true')                                                                                
+    parser.add_argument('--prefix', type=json.loads, default=None, help='Prefix commands per channels.')                                                                                
+    parser.parse_args(args=args, namespace=params)
+
+    logging.basicConfig(level=getattr(logging, params.loglevel.upper()))
+    LOGGER.info('Parsing args from CLI.')
+    LOGGER.info(f'Params: {params}')
+
+    Context.cache_dir = params.result_dir
+    task_instance = task_class(**(params.kwargs if params.kwargs is not None else {}))
+    if not params.dont_force_entrypoint:
+        task_instance.clear_task()
+    try:
+        _, stats = task_instance.run_graph(
+                executor=Context.get_executor(params.exec_type, max_workers=params.max_workers),
+                rate_limits=params.rate_limits,
+                detect_source_change=not params.disable_detect_source_change,
+                show_progress=not params.dont_show_progress,
+                force_interactive=params.interactive,
+                prefixes=params.prefix,
+                )
+    except FailedTaskError as e:
+        os.system('stty sane')  # Fix broken tty after Popen with tricky command. Need some fix in the future.
+        e.task.log_error()
+        raise
+    else:
+        os.system('stty sane')
+
+    LOGGER.debug(f"stats:\n{stats}")
+
+    if task_instance.task_stdout.exists():
+        print("==== ENTRYPOINT STDOUT (DETACHED) ====")
+        print(open(task_instance.task_stdout).read())
+    else:
+        print("==== NO ENTRYPOINT STDOUT (DETACHED) ====")
+
+    if task_instance.task_stderr.exists():
+        print("==== ENTRYPOINT STDERR (DETACHED) ====")
+        print(open(task_instance.task_stderr).read())
+    else:
+        print("==== NO ENTRYPOINT STDERR (DETACHED) ====")

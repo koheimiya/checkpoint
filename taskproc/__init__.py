@@ -11,6 +11,7 @@ Limitations:
 from .types import Context
 from .task import Task, TaskBase, Req, Requires, RequiresList, RequiresDict, Const
 from .graph import FailedTaskError
+from .app import run_with_args
 
 
 __EXPORT__ = [

@@ -1,5 +1,5 @@
 from typing import NewType
-from taskproc import TaskBase, Task, Requires, RequiresList
+from taskproc import TaskBase, Task, Requires, RequiresList, run_with_args
 
 
 Data = NewType('Data', str)
@@ -81,3 +81,7 @@ class Main(TaskBase):
         print('Running main')
         scores = [res['score'] for res in self.results]
         print(scores)
+
+
+if __name__ == '__main__':
+    Main.run_graph_with_args()

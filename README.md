@@ -241,7 +241,5 @@ Below is the list of the built-in properties/methods of `TaskBase`. Do not overr
 | `clear_all_tasks`      | class    | method   | Clear the cache of the task class |
 
 ## TODO
-- [ ] Add `.parse_arg()` function to activate CLI argument parsing
-- [ ] Make the cache path argument explicit and the resulting directories visible.
-- [ ] Add local executor
+- [ ] Make `cache_dir` transparent. (reset all `task_config`s on `run_graph`)
 - [ ] Task graph visualizer
