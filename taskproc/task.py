@@ -36,7 +36,7 @@ P = ParamSpec('P')
 R = TypeVar('R', covariant=True)
 
 
-class CONTEXT(ContextDecorator, AbstractContextManager):
+class Cache(ContextDecorator, AbstractContextManager):
     _ENABLED: bool = False
     CACHE_DIR: Path = Path.cwd() / '.cache'
     TASK_CONFIG_HISTORY: list[TaskConfig[Any]] = []
@@ -310,11 +310,11 @@ class TaskBase(Generic[R]):
     @classmethod
     @property
     def task_config(cls) -> TaskConfig[R]:
-        if not CONTEXT._ENABLED:
-            raise RuntimeError(f'{CONTEXT} must be enabled to access `task_config`')
+        if not Cache._ENABLED:
+            raise RuntimeError(f'{Cache} must be enabled to access `task_config`')
 
         config = getattr(cls, '_task_config', None)
-        if config is not None and config in CONTEXT.TASK_CONFIG_HISTORY:
+        if config is not None and config in Cache.TASK_CONFIG_HISTORY:
             return config
 
         _channel = cls._task_channel
@@ -330,12 +330,12 @@ class TaskBase(Generic[R]):
             raise ValueError('Invalid channel value:', _channel)
         config = TaskConfig(
                 task_class=cls,
-                cache_dir=CONTEXT.CACHE_DIR,
+                cache_dir=Cache.CACHE_DIR,
                 channels=channels,
                 compress_level=cls._task_compress_level,
                 prefix_command=cls._task_prefix_command,
                 )
-        CONTEXT.TASK_CONFIG_HISTORY.append(config)
+        Cache.TASK_CONFIG_HISTORY.append(config)
         cls._task_config = config
         return config
 
@@ -399,8 +399,8 @@ class TaskBase(Generic[R]):
         return self._task_worker.get_result(), stats
 
     @classmethod
-    def run_graph_with_args(cls, args: Sequence[str] | None = None, defaults: argparse.Namespace | None = None) -> None:
-        _run_with_args(cls, args=args, defaults=defaults)
+    def parse_cli_args(cls, args: Sequence[str] | None = None, defaults: argparse.Namespace | None = None) -> None:
+        _run_with_argparse(cls, args=args, defaults=defaults)
 
     def get_task_result(self) -> R:
         return self._task_worker.get_result()
@@ -545,7 +545,7 @@ RequiresList = Req[Sequence[Task[R]], list[R]]
 RequiresDict = Req[Mapping[K, Task[R]], dict[K, R]]
 
 
-def _run_with_args(
+def _run_with_argparse(
         task_class: Type[TaskBase[Any]],
         args: Sequence[str] | None,
         defaults: argparse.Namespace | None,
@@ -573,7 +573,7 @@ def _run_with_args(
     LOGGER.info('Parsing args from CLI.')
     LOGGER.info(f'Params: {params}')
 
-    with CONTEXT(cache_dir=params.result_dir):
+    with Cache(cache_dir=params.result_dir):
         task_instance = task_class(**(params.kwargs if params.kwargs is not None else {}))
         if not params.dont_force_entrypoint:
             task_instance.clear_task()

@@ -39,7 +39,7 @@ See [here](examples/ml_taskfile.py) for a typical usage of `taskproc`.
 Pipeline is a directed acyclic graph (DAG) of tasks with a single sink node (i.e., final task), where task is a unit of work represented with a class.
 Each task and its upstream dependencies are specified with a class definition like so:
 ```python
-from taskproc import TaskBase, Requires, Const
+from taskproc import TaskBase, Requires, Const, Cache
 
 class Choose(TaskBase):
     """ Compute the binomial coefficient. """
@@ -71,30 +71,30 @@ class Choose(TaskBase):
         # The return values of the prerequisite tasks are accessible via the descriptors:
         return self.prev1 + self.prev2
 
-# To run the task as well as the upstreams, use the `run_graph()` method.
-ans = Choose(6, 3).run_graph()  # `ans` should be 6 Choose 3, which is 20.
+# To run the task as well as the upstreams, use the `run_graph()` method inside `Cache(cache_dir)`.
+with Cache('./cache'):
+    ans = Choose(6, 3).run_graph()  # `ans` should be 6 Choose 3, which is 20.
 
-# It greedily executes all the necessary tasks as parallel as possible
-# and then spits out the return value of the task on which we call `run_graph()`.
-# The return values of the intermediate tasks are cached at
-# `{$TP_CACHE_DIR:-./.cache}/taskproc/{module_name}.{task_name}/results/...`
-# and reused on the fly whenever possible.
+    # It greedily executes all the necessary tasks as parallel as possible
+    # and then spits out the return value of the task on which we call `run_graph()`.
+    # The return values of the intermediate tasks are cached at `./cache`
+    # and reused on the fly whenever possible.
 ```
 
 ### Deleting cache
 
 It is possible to selectively discard cache: 
 ```python
-# After some modificaiton of `Choose(3, 3)`,
-# selectively discard the cache corresponding to the modification.
-Choose(3, 3).clear_task()
+with Cache('./cache'):
+    # After some modificaiton of `Choose(3, 3)`,
+    # selectively discard the cache corresponding to the modification.
+    Choose(3, 3).clear_task()
 
-# `ans` is recomputed tracing back to the computation of `Choose(3, 3)`.
-ans = Choose(6, 3).run_graph()
-
-# Delete all the cache associated with `Choose`,
-# equivalent to `rm -r {$TP_CACHE_DIR:-./.cache}/taskproc/{module_name}.Choose`.
-Choose.clear_all_tasks()            
+    # `ans` is recomputed tracing back to the computation of `Choose(3, 3)`.
+    ans = Choose(6, 3).run_graph()
+    
+    # Delete all the cache associated with `Choose`.
+    Choose.clear_all_tasks()            
 ```
 
 ### Task IO
@@ -105,14 +105,15 @@ class MyTask(TaskBase):
     def __init__(self, param1, param2):
         ...
 
-MyTask(
-    param1={
-        'upstream_task0': UpstreamTask(),
-        'other_params': [1, 2],
-        ...
-    },
-    param2={ ... }
-}).run_graph()
+with Cache('./cache'):
+    MyTask(
+        param1={
+            'upstream_task0': UpstreamTask(),
+            'other_params': [1, 2],
+            ...
+        },
+        param2={ ... }
+    }).run_graph()
 ```
 
 List/dict of upstream tasks can be registered with `RequiresList` and `RequiresDict`:
@@ -188,11 +189,12 @@ from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 class MyTask(TaskBase):
     ...
 
-# Limit the number of parallel workers
-MyTask().run_graph(executor=ProcessPoolExecutor(max_workers=2))
-
-# Thread-based parallelism
-MyTask().run_graph(executor=ThreadPoolExecutor())
+with Cache('./cache'):
+    # Limit the number of parallel workers
+    MyTask().run_graph(executor=ProcessPoolExecutor(max_workers=2))
+    
+    # Thread-based parallelism
+    MyTask().run_graph(executor=ThreadPoolExecutor())
 ```
 
 One can also control the concurrency at a task/channel level:
@@ -205,28 +207,33 @@ class AnotherTaskUsingGPU(TaskBase):
     _task_channel = ['gpu', 'memory']
     ...
 
-# Queue-level concurrency control
-SomeDownstreamTask().run_graph(rate_limits={'gpu': 1})
-SomeDownstreamTask().run_graph(rate_limits={'memory': 1})
-
-# Task-level concurrency control
-SomeDownstreamTask().run_graph(rate_limits={TaskUsingGPU.task_name: 1})
+with Cache('./cache'):
+    # Queue-level concurrency control
+    SomeDownstreamTask().run_graph(rate_limits={'gpu': 1})
+    SomeDownstreamTask().run_graph(rate_limits={'memory': 1})
+    
+    # Task-level concurrency control
+    SomeDownstreamTask().run_graph(rate_limits={TaskUsingGPU.task_name: 1})
 
 ```
 
 ### Commandline tool
-We can use taskproc from commandline like `taskproc path/to/taskfile.py`, where `taskfile.py` defines the `Main` task as follows:
+`taskproc`'s Task classes have a utility method for parsing commandline arguments.
+For example,
 ```python
 # taskfile.py
 
 class Main(TaskBase):
     ...
+
+
+if __name__ == '__main__':
+    Main.parse_cli_args()
 ```
-The command runs the `Main` task and stores the cache at `{$TP_CACHE_DIR:-./.cache}/taskproc/...`.
-Please refer to `taskproc --help` for more info.
+Use `--help` option for more details.
 
 
-### Built-in properties
+### Built-in properties/methods
 Below is the list of the built-in properties/methods of `TaskBase`. Do not override these attributes in the subclass.
 
 | Name | Owner | Type | Description |
@@ -239,10 +246,11 @@ Below is the list of the built-in properties/methods of `TaskBase`. Do not overr
 | `task_stderr`          | instance | property | Path to the task's stderr |
 | `run_task`             | instance | method   | Run the task |
 | `run_graph`            | instance | method   | Run the task after necessary upstream tasks and save the results in the cache |
-| `run_graph_with_stats` | instance | method   | `run_graph` with additional statistics |
 | `get_task_result`      | instance | method   | Directly get the result of the task (fails if the cache is missing) |
 | `clear_task`           | instance | method   | Clear the cache of the task instance |
 | `clear_all_tasks`      | class    | method   | Clear the cache of the task class |
+| `parse_cli_args`       | class    | method   | `run_graph` with command line arguments |
 
 ## TODO
-- [ ] Task graph visualizer
+- [ ] Consider renaming `parse_cli_args` and `Cache`
+- [ ] Simple task graph visualizer

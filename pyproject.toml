@@ -23,16 +23,13 @@ dependencies = [
     "python-dotenv<2.0.0,>=1.0.0",
 ]
 name = "taskproc"
-version = "0.14.0"
+version = "0.15.0"
 description = "A lightweight task processing library written in pure Python"
 readme = "README.md"
 
 [project.urls]
 homepage = "https://github.com/koheimiya/taskproc"
 repository = "https://github.com/koheimiya/taskproc"
-
-[project.scripts]
-taskproc = "taskproc.app:main"
 
 [project.group.dev.dependencies]
 pytest = "^7.3.1"

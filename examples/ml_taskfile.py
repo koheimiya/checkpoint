@@ -84,4 +84,4 @@ class Main(TaskBase):
 
 
 if __name__ == '__main__':
-    Main.run_graph_with_args()
+    Main.parse_cli_args()
