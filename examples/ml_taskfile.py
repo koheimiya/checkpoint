@@ -1,5 +1,5 @@
 from typing import NewType
-from taskproc import TaskBase, Task, Requires, RequiresList, run_with_args
+from taskproc import TaskBase, Task, Requires, RequiresList
 
 
 Data = NewType('Data', str)

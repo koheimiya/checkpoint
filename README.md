@@ -137,7 +137,8 @@ The output of the `run_task` method should be serializable with `cloudpickle`,
 which is then compressed with `gzip`.
 The compression level can be changed as follows (defaults to 9).
 ```python
-class NoCompressionTask(TaskBase, compress_level=0):
+class NoCompressionTask(TaskBase):
+    _task_compress_level = 0
     ...
 ```
 
@@ -170,10 +171,11 @@ class TrainModel(TaskBase):
 
 
 ### Job scheduling and prefixes
-Tasks can be run with job schedulers using `prefix_command`, which will be inserted just before each task call.
+Tasks can be run with job schedulers using `_task_prefix_command`, which will be inserted just before each task call.
 ```python
 
-class TaskWithJobScheduler(TaskBase, prefix_command='jbsub -interactive -tty -queue x86_1h -cores 16+1 -mem 64g'):
+class TaskWithJobScheduler(TaskBase):
+    _task_prefix_command = 'jbsub -interactive -tty -queue x86_1h -cores 16+1 -mem 64g'
     ...
 ```
 
@@ -195,15 +197,17 @@ MyTask().run_graph(executor=ThreadPoolExecutor())
 
 One can also control the concurrency at a task/channel level:
 ```python
-class TaskUsingGPU(TaskBase, channel='<gpu>'):
+class TaskUsingGPU(TaskBase):
+    _task_channel = 'gpu'
     ...
 
-class AnotherTaskUsingGPU(TaskBase, channel=['<gpu>', '<memory>']):
+class AnotherTaskUsingGPU(TaskBase):
+    _task_channel = ['gpu', 'memory']
     ...
 
 # Queue-level concurrency control
-SomeDownstreamTask().run_graph(rate_limits={'<gpu>': 1})
-SomeDownstreamTask().run_graph(rate_limits={'<memory>': 1})
+SomeDownstreamTask().run_graph(rate_limits={'gpu': 1})
+SomeDownstreamTask().run_graph(rate_limits={'memory': 1})
 
 # Task-level concurrency control
 SomeDownstreamTask().run_graph(rate_limits={TaskUsingGPU.task_name: 1})
@@ -241,5 +245,4 @@ Below is the list of the built-in properties/methods of `TaskBase`. Do not overr
 | `clear_all_tasks`      | class    | method   | Clear the cache of the task class |
 
 ## TODO
-- [ ] Make `cache_dir` transparent. (reset all `task_config`s on `run_graph`)
 - [ ] Task graph visualizer

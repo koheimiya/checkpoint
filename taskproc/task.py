@@ -1,12 +1,12 @@
 from __future__ import annotations
 from collections.abc import Iterable
-from contextlib import redirect_stderr, redirect_stdout, ExitStack
-from typing import Callable, Concatenate, Generic, Mapping, Sequence, Type, TypeVar, Any, cast
+from contextlib import ContextDecorator, redirect_stderr, redirect_stdout, ExitStack, AbstractContextManager
+from typing import Callable, Concatenate, Generic, Literal, Mapping, Sequence, Type, TypeVar, Any, cast
 from typing_extensions import ParamSpec, get_origin, overload
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from concurrent.futures import Executor, ProcessPoolExecutor
+from concurrent.futures import Executor, ProcessPoolExecutor, ThreadPoolExecutor
 from functools import cached_property
 import argparse
 import os
@@ -20,7 +20,7 @@ import subprocess
 import sys
 
 
-from .types import Json, TaskKey, Context
+from .types import Json, TaskKey
 from .database import Database
 from .graph import TaskGraph, run_task_graph, FailedTaskError
 
@@ -36,17 +36,44 @@ P = ParamSpec('P')
 R = TypeVar('R', covariant=True)
 
 
+class CONTEXT(ContextDecorator, AbstractContextManager):
+    _ENABLED: bool = False
+    CACHE_DIR: Path = Path.cwd() / '.cache'
+    TASK_CONFIG_HISTORY: list[TaskConfig[Any]] = []
+
+    def __init__(self, cache_dir: Path | str):
+        self.cache_dir = Path(cache_dir).resolve()
+
+    def __enter__(self):
+        cls = type(self)
+        assert not cls._ENABLED
+        cls._ENABLED = True
+        self.orig = cls.CACHE_DIR
+        cls.CACHE_DIR = self.cache_dir
+        cls.TASK_CONFIG_HISTORY.clear()
+
+    def __exit__(self, __exc_type: type[BaseException] | None, __exc_value: BaseException | None, __traceback: Any) -> bool | None:
+        cls = type(self)
+        assert cls._ENABLED
+        cls._ENABLED = False
+        cls.TASK_CONFIG_HISTORY.clear()
+        cls.CACHE_DIR = self.orig
+
+
+
 class TaskConfig(Generic[R]):
     """ Information specific to a task class (not instance) """
     def __init__(
             self,
             task_class: Type[TaskBase[R]],
+            cache_dir: Path,
             channels: tuple[str, ...],
             compress_level: int,
             prefix_command: str,
             ) -> None:
 
         self.task_class = task_class
+        self.cache_dir = cache_dir
         self.name = _serialize_function(task_class)
         self.compress_level = compress_level
         self.channels = (self.name,) + channels
@@ -55,8 +82,7 @@ class TaskConfig(Generic[R]):
 
     @cached_property
     def db(self) -> Database[R]:
-        cache_path = Context.cache_dir
-        return Database.make(cache_path=cache_path, name=self.name, compress_level=self.compress_level)
+        return Database.make(cache_path=self.cache_dir, name=self.name, compress_level=self.compress_level)
 
     @cached_property
     def source_timestamp(self) -> datetime:
@@ -284,8 +310,11 @@ class TaskBase(Generic[R]):
     @classmethod
     @property
     def task_config(cls) -> TaskConfig[R]:
+        if not CONTEXT._ENABLED:
+            raise RuntimeError(f'{CONTEXT} must be enabled to access `task_config`')
+
         config = getattr(cls, '_task_config', None)
-        if config is not None:
+        if config is not None and config in CONTEXT.TASK_CONFIG_HISTORY:
             return config
 
         _channel = cls._task_channel
@@ -301,17 +330,19 @@ class TaskBase(Generic[R]):
             raise ValueError('Invalid channel value:', _channel)
         config = TaskConfig(
                 task_class=cls,
+                cache_dir=CONTEXT.CACHE_DIR,
                 channels=channels,
                 compress_level=cls._task_compress_level,
                 prefix_command=cls._task_prefix_command,
                 )
+        CONTEXT.TASK_CONFIG_HISTORY.append(config)
         cls._task_config = config
         return config
 
     @classmethod
     @property
     def task_name(cls) -> str:
-        return cls._task_config.name
+        return cls.task_config.name
 
     @property
     def task_directory(self) -> Path:
@@ -335,11 +366,7 @@ class TaskBase(Generic[R]):
 
     @classmethod
     def clear_all_tasks(cls) -> None:
-        try:
-            cls._task_config.clear_all()
-        except AttributeError:
-            cls.task_config.clear_all()
-            pass
+        cls.task_config.clear_all()
 
     def clear_task(self) -> None:
         self._task_worker.clear()
@@ -530,7 +557,7 @@ def _run_with_args(
     parser = argparse.ArgumentParser()
     parser.add_argument('result_dir', type=Path, help='Path to result directory.')       
     parser.add_argument('-e', '--entrypoint', default='Main', help='Task name for entrypoint.')                                              
-    parser.add_argument('-t', '--exec-type', choices=['process', 'thread'], default=None)                                         
+    parser.add_argument('-t', '--exec-type', choices=['process', 'thread'], default='process')                                         
     parser.add_argument('-w', '--max-workers', type=int, default=None)                                                                       
     parser.add_argument('-i', '--interactive', action='store_true')                                                                                 
     parser.add_argument('-D', '--disable-detect-source-change', action='store_true', help='Disable automatic source change detection based on AST.')
@@ -546,25 +573,25 @@ def _run_with_args(
     LOGGER.info('Parsing args from CLI.')
     LOGGER.info(f'Params: {params}')
 
-    Context.cache_dir = params.result_dir
-    task_instance = task_class(**(params.kwargs if params.kwargs is not None else {}))
-    if not params.dont_force_entrypoint:
-        task_instance.clear_task()
-    try:
-        _, stats = task_instance.run_graph(
-                executor=Context.get_executor(params.exec_type, max_workers=params.max_workers),
-                rate_limits=params.rate_limits,
-                detect_source_change=not params.disable_detect_source_change,
-                show_progress=not params.dont_show_progress,
-                force_interactive=params.interactive,
-                prefixes=params.prefix,
-                )
-    except FailedTaskError as e:
-        os.system('stty sane')  # Fix broken tty after Popen with tricky command. Need some fix in the future.
-        e.task.log_error()
-        raise
-    else:
-        os.system('stty sane')
+    with CONTEXT(cache_dir=params.result_dir):
+        task_instance = task_class(**(params.kwargs if params.kwargs is not None else {}))
+        if not params.dont_force_entrypoint:
+            task_instance.clear_task()
+        try:
+            _, stats = task_instance.run_graph(
+                    executor=_get_executor(params.exec_type, max_workers=params.max_workers),
+                    rate_limits=params.rate_limits,
+                    detect_source_change=not params.disable_detect_source_change,
+                    show_progress=not params.dont_show_progress,
+                    force_interactive=params.interactive,
+                    prefixes=params.prefix,
+                    )
+        except FailedTaskError as e:
+            os.system('stty sane')  # Fix broken tty after Popen with tricky command. Need some fix in the future.
+            e.task.log_error()
+            raise
+        else:
+            os.system('stty sane')
 
     LOGGER.debug(f"stats:\n{stats}")
 
@@ -579,3 +606,13 @@ def _run_with_args(
         print(open(task_instance.task_stderr).read())
     else:
         print("==== NO ENTRYPOINT STDERR (DETACHED) ====")
+
+
+def _get_executor(executor_name: Literal['process', 'thread'] | str, max_workers: int | None) -> Executor:
+    if executor_name == 'process':
+        executor_type = ProcessPoolExecutor
+    elif executor_name == 'thread':
+        executor_type = ThreadPoolExecutor
+    else:
+        raise ValueError('Unrecognized executor name:', executor_name)
+    return executor_type(max_workers=max_workers)

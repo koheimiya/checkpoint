@@ -8,15 +8,13 @@ Key features:
 Limitations:
     - No priority-based scheduling.
 """
-from .types import Context
-from .task import Task, TaskBase, Req, Requires, RequiresList, RequiresDict, Const
+from .task import Task, TaskBase, Req, Requires, RequiresList, RequiresDict, Const, CONTEXT
 from .graph import FailedTaskError
-from .app import run_with_args
 
 
 __EXPORT__ = [
         Task, Const, TaskBase,
         Req, Requires, RequiresList, RequiresDict,
-        Context,
+        CONTEXT,
         FailedTaskError
         ]
