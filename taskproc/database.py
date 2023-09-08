@@ -41,16 +41,14 @@ class Database(Generic[T]):
             ...
     """
     base_path: Path
-    compress_level: int
     id_table: IdTable
     serializer: Serializer = DEFAULT_SERIALIZER
 
     @classmethod
-    def make(cls, cache_path: Path, name: str, compress_level: int) -> Self:
-        base_path = cache_path / 'taskproc' / name
+    def make(cls, cache_path: Path, name: str) -> Self:
+        base_path = cache_path / name
         return Database(
                 base_path=base_path,
-                compress_level=compress_level,
                 id_table=IdTable(base_path / 'id_table')
                 )
 
@@ -63,7 +61,6 @@ class Database(Generic[T]):
                 instance_id=self.id_table.get(key),
                 argkey=key,
                 dependencies=deps,
-                compress_level=self.compress_level,
                 )
 
     @property
@@ -88,10 +85,8 @@ class Database(Generic[T]):
         return _get_timestamp(self.source_path)
 
     def clear(self) -> None:
-        self.id_table.clear()
-        if self.results_directory.exists():
-            shutil.rmtree(self.results_directory)
-        self.results_directory.mkdir()
+        if self.base_path.exists():
+            shutil.rmtree(self.base_path)
 
 
 def _get_timestamp(path: Path) -> datetime:
@@ -100,19 +95,18 @@ def _get_timestamp(path: Path) -> datetime:
 
 
 class InstanceDirectory(Generic[T]):
-    def __init__(self, base_path: Path, instance_id: int, argkey: Json, dependencies: dict[str, Path], compress_level: int):
+    def __init__(self, base_path: Path, instance_id: int, argkey: Json, dependencies: dict[str, Path]):
         self.base_path = base_path
         self.task_id = instance_id
         self.argkey = argkey
         self.dependencies = dependencies
-        self.compress_level = compress_level
         if not self.path.exists():
             self.initialize()
 
     def initialize(self):
         if self.path.exists():
             shutil.rmtree(self.path)
-        self.path.mkdir()
+        self.path.mkdir(parents=True)
         with open(self.args_path, 'w') as ref:
             ref.write(self.argkey)
         self.data_dir.mkdir()
@@ -152,9 +146,9 @@ class InstanceDirectory(Generic[T]):
     def deps_dir(self) -> Path:
         return self.path / 'deps'
 
-    def save_result(self, obj: T) -> datetime:
+    def save_result(self, obj: T, compress_level: int) -> datetime:
         path = self.result_path
-        with gzip.open(path, 'wb', compresslevel=self.compress_level) as ref:
+        with gzip.open(path, 'wb', compresslevel=compress_level) as ref:
             cloudpickle.dump(obj, ref)
         return _get_timestamp(path)
 
@@ -178,7 +172,6 @@ class InstanceDirectory(Generic[T]):
 class IdTable:
     def __init__(self, path: Path | str) -> None:
         self.table = dc.Cache(directory=path)
-        self.lock = dc.Lock(self.table, 'global')
         self.cache: dict[Any, int] = {}
     
     def get(self, x: Any) -> int:
@@ -186,7 +179,6 @@ class IdTable:
         if out is not None:
             return out
 
-        # with self.lock:
         with self.table.transact():
             value = self.table.get(key=x)
             if value is None:
@@ -197,15 +189,11 @@ class IdTable:
         return value
 
     def __contains__(self, key: Any) -> bool:
-        # with self.lock:
         return key in self.table
 
     def list_keys(self) -> list[str]:
-        # with self.lock:
-        # with self.table as ref:
         with self.table.transact():
             return list(map(str, self.table))
 
     def clear(self) -> None:
-        # with self.lock:
         self.table.clear()

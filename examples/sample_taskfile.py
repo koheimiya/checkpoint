@@ -8,4 +8,4 @@ class Main(TaskBase):
 
 
 if __name__ == '__main__':
-    Main.parse_cli_args()
+    Main.cli()

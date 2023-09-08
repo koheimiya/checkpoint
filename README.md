@@ -228,7 +228,7 @@ class Main(TaskBase):
 
 
 if __name__ == '__main__':
-    Main.parse_cli_args()
+    Main.cli()
 ```
 Use `--help` option for more details.
 
@@ -249,8 +249,8 @@ Below is the list of the built-in properties/methods of `TaskBase`. Do not overr
 | `get_task_result`      | instance | method   | Directly get the result of the task (fails if the cache is missing) |
 | `clear_task`           | instance | method   | Clear the cache of the task instance |
 | `clear_all_tasks`      | class    | method   | Clear the cache of the task class |
-| `parse_cli_args`       | class    | method   | `run_graph` with command line arguments |
+| `cli`                  | class    | method   | `run_graph` with command line arguments |
 
 ## TODO
-- [ ] Consider renaming `parse_cli_args` and `Cache`
-- [ ] Simple task graph visualizer
+- [ ] Better stdout/stderr logging.
+- [ ] Simple task graph visualizer.

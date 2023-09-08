@@ -63,7 +63,7 @@ def test_graph():
 
 
 class TaskA(TaskBase):
-    _task_channel = ['<mychan>', '<another_chan>']
+    task_channel = ['<mychan>', '<another_chan>']
     def __init__(self): ...
 
     def run_task(self) -> str:
@@ -71,7 +71,7 @@ class TaskA(TaskBase):
 
 
 class TaskB(TaskBase):
-    _task_channel = '<mychan>'
+    task_channel = '<mychan>'
     def __init__(self): ...
     
     def run_task(self) -> str:
@@ -79,7 +79,7 @@ class TaskB(TaskBase):
 
 
 class TaskC(TaskBase):
-    _task_compress_level = 0
+    task_compress_level = 0
     a: Requires[str]
     b: Requires[str]
 
@@ -96,9 +96,10 @@ def test_multiple_tasks():
     TaskA.clear_all_tasks()
     TaskB.clear_all_tasks()
     TaskC.clear_all_tasks()
-    assert TaskC().run_graph(rate_limits={'<mychan>': 1})[0] == 'hello, world'
-    assert TaskB._task_config.channels == (TaskB._task_config.name, '<mychan>')
-    assert TaskC._task_config.db.compress_level == 0
+    main = TaskC()
+    assert main.run_graph(rate_limits={'<mychan>': 1})[0] == 'hello, world'
+    assert TaskB()._task_worker.channels == (TaskB.task_config.name, '<mychan>')
+    assert main.task_compress_level == 0
 
 
 class TaskRaise(TaskBase):
@@ -223,8 +224,8 @@ def test_mapping():
 
 
 class PrefixedJob(TaskBase):
-    _task_prefix_command = 'bash tests/run_with_hello.bash'
-    _task_channel = 'mychan'
+    task_prefix_command = 'bash tests/run_with_hello.bash'
+    task_channel = 'mychan'
     def run_task(self) -> None:
         print('world')
         return

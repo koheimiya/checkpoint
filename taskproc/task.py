@@ -60,29 +60,22 @@ class Cache(ContextDecorator, AbstractContextManager):
         cls.CACHE_DIR = self.orig
 
 
-
 class TaskConfig(Generic[R]):
     """ Information specific to a task class (not instance) """
     def __init__(
             self,
             task_class: Type[TaskBase[R]],
             cache_dir: Path,
-            channels: tuple[str, ...],
-            compress_level: int,
-            prefix_command: str,
             ) -> None:
 
         self.task_class = task_class
         self.cache_dir = cache_dir
         self.name = _serialize_function(task_class)
-        self.compress_level = compress_level
-        self.channels = (self.name,) + channels
-        self.prefix_command = prefix_command
         self.worker_registry: dict[Json, TaskWorker[R]] = {}
 
     @cached_property
     def db(self) -> Database[R]:
-        return Database.make(cache_path=self.cache_dir, name=self.name, compress_level=self.compress_level)
+        return Database.make(cache_path=self.cache_dir, name=self.name)
 
     @cached_property
     def source_timestamp(self) -> datetime:
@@ -103,12 +96,21 @@ class TaskWorker(Generic[R]):
         self.check_requirements_set()
         self.dirobj = config.db.get_instance_dir(
                 key=arg_key,
-                deps={k: w.dirobj.path for k, w in self.get_prerequisites().items()}
+                deps={k: w.dirobj.path for k, w in self.get_prerequisites().items()},
                 )
 
     @property
     def channels(self) -> tuple[str, ...]:
-        return self.config.channels
+        _channel = self.instance.task_channel
+        channels: tuple[str, ...]
+        if isinstance(_channel, str):
+            channels = (_channel,)
+        elif isinstance(_channel, Iterable):
+            channels = tuple(_channel)
+            assert all(isinstance(q, str) for q in channels)
+        else:
+            raise ValueError('Invalid channel value:', _channel)
+        return (self.instance.task_name,) + channels
 
     @property
     def source_timestamp(self) -> datetime:
@@ -165,17 +167,15 @@ class TaskWorker(Generic[R]):
 
     def set_result(self, execute_locally: bool, force_interactive: bool, prefix_command: str | None = None) -> None:
         self.dirobj.initialize()
-        prefix = prefix_command if prefix_command is not None else self.config.prefix_command
+        prefix = prefix_command if prefix_command is not None else self.instance.task_prefix_command
         if force_interactive:
             if prefix:
                 LOGGER.warning(f'Ignore prefix command and enter interactive mode. {prefix=}')
             res = self.instance.run_task()
-            # self.config.db.save(self.arg_key, res)
-            self.dirobj.save_result(res)
+            self.dirobj.save_result(res, compress_level=self.instance.task_compress_level)
         elif execute_locally and prefix == '':
             res = self.run_instance_task_with_captured_output()
-            # self.config.db.save(self.arg_key, res)
-            self.dirobj.save_result(res)
+            self.dirobj.save_result(res, compress_level=self.instance.task_compress_level)
         else:
             dir_ref = self.directory / 'tmp'
             if dir_ref.exists():
@@ -186,7 +186,7 @@ class TaskWorker(Generic[R]):
                 pycmd = f"""import pickle
 worker = pickle.load(open("{worker_path}", "rb"))
 res = worker.run_instance_task_with_captured_output()
-worker.dirobj.save_result(res)
+worker.dirobj.save_result(res, worker.instance.task_compress_level)
 """.replace('\n', '; ')
 
                 with open(worker_path, 'wb') as worker_ref:
@@ -284,9 +284,9 @@ def wrap_task_init(init_method: Callable[Concatenate[TaskBase[R], P], None]) -> 
 class TaskBase(Generic[R]):
     _task_config: TaskConfig[R]
     _task_worker: TaskWorker[R]
-    _task_compress_level: int = 9
-    _task_prefix_command: str = ''
-    _task_channel: str | Sequence[str] | None = None
+    task_compress_level: int = 9
+    task_prefix_command: str = ''
+    task_channel: str | Sequence[str] = tuple()
 
     def __init__(self) -> None:
         ...
@@ -317,23 +317,9 @@ class TaskBase(Generic[R]):
         if config is not None and config in Cache.TASK_CONFIG_HISTORY:
             return config
 
-        _channel = cls._task_channel
-        channels: tuple[str, ...]
-        if isinstance(_channel, str):
-            channels = (_channel,)
-        elif isinstance(_channel, Iterable):
-            channels = tuple(_channel)
-            assert all(isinstance(q, str) for q in channels)
-        elif _channel is None:
-            channels = tuple()
-        else:
-            raise ValueError('Invalid channel value:', _channel)
         config = TaskConfig(
                 task_class=cls,
                 cache_dir=Cache.CACHE_DIR,
-                channels=channels,
-                compress_level=cls._task_compress_level,
-                prefix_command=cls._task_prefix_command,
                 )
         Cache.TASK_CONFIG_HISTORY.append(config)
         cls._task_config = config
@@ -399,7 +385,7 @@ class TaskBase(Generic[R]):
         return self._task_worker.get_result(), stats
 
     @classmethod
-    def parse_cli_args(cls, args: Sequence[str] | None = None, defaults: argparse.Namespace | None = None) -> None:
+    def cli(cls, args: Sequence[str] | None = None, defaults: argparse.Namespace | None = None) -> None:
         _run_with_argparse(cls, args=args, defaults=defaults)
 
     def get_task_result(self) -> R:
