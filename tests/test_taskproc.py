@@ -24,7 +24,7 @@ class Choose(TaskBase):
         return self.prev1 + self.prev2
 
 
-@Cache('./.cache')
+@Cache('./.cache/tests')
 def test_graph():
     """ 15 caches:
      0123
@@ -91,7 +91,7 @@ class TaskC(TaskBase):
         return f'{self.a}, {self.b}'
 
 
-@Cache('./.cache')
+@Cache('./.cache/tests')
 def test_multiple_tasks():
     TaskA.clear_all_tasks()
     TaskB.clear_all_tasks()
@@ -108,7 +108,7 @@ class TaskRaise(TaskBase):
         raise ValueError(42)
 
 
-@Cache('./.cache')
+@Cache('./.cache/tests')
 def test_raise():
     with pytest.raises(FailedTaskError):
         TaskRaise().run_graph()
@@ -136,7 +136,7 @@ class GreetWithFile(TaskBase):
             return f.read()
 
 
-@Cache('./.cache')
+@Cache('./.cache/tests')
 def test_requires_directory():
     CreateFile.clear_all_tasks()
     GreetWithFile.clear_all_tasks()
@@ -192,7 +192,7 @@ class SummarizeParam(TaskBase):
         return out
 
 
-@Cache('./.cache')
+@Cache('./.cache/tests')
 def test_json_param():
     res, _ = SummarizeParam(x=[1, 2], y=dict(zip(range(3), 'abc')), z=42).run_graph()
     assert res == {'x': 2, 'y': 3, 'z': None}
@@ -216,7 +216,7 @@ class DownstreamTask(TaskBase):
         return self.up
 
 
-@Cache('./.cache')
+@Cache('./.cache/tests')
 def test_mapping():
     MultiResultTask.clear_all_tasks()
     DownstreamTask.clear_all_tasks()
@@ -231,7 +231,7 @@ class PrefixedJob(TaskBase):
         return
 
 
-@Cache('./.cache')
+@Cache('./.cache/tests')
 def test_prefix_command(capsys):
     PrefixedJob.clear_all_tasks()
     task = PrefixedJob()
@@ -243,7 +243,7 @@ def test_prefix_command(capsys):
     assert open(task.task_stdout, 'r').read() == '=== caller log ===\nhello\n=== callee log ===\nworld\n'
 
 
-@Cache('./.cache')
+@Cache('./.cache/tests')
 def test_prefix_command2(capsys):
     PrefixedJob.clear_all_tasks()
     task = PrefixedJob()
@@ -266,7 +266,7 @@ class SleepTask(TaskBase):
         return t + max(self.prevs, default=0)
 
 
-@Cache('./.cache')
+@Cache('./.cache/tests')
 def test_sleep_task():
     SleepTask.clear_all_tasks()
     task1 = SleepTask()
@@ -286,7 +286,7 @@ class InteractiveJob(TaskBase):
         return
 
 
-@Cache('./.cache')
+@Cache('./.cache/tests')
 def test_interactive(capsys):
     InteractiveJob.clear_all_tasks()
     task = InteractiveJob()
@@ -300,17 +300,17 @@ def test_interactive(capsys):
 
 
 def test_context():
-    with Cache('./.cache/1'):
+    with Cache('./.cache/tests/1'):
         Choose(3, 2).run_graph()
 
-    with Cache('./.cache/2'):
+    with Cache('./.cache/tests/2'):
         Choose.clear_all_tasks()
 
-    with Cache('./.cache/1'):
+    with Cache('./.cache/tests/1'):
         assert Choose(3, 2)._task_worker.peek_timestamp() is not None
 
     with pytest.raises(RuntimeError):
          Choose(3, 2)
 
-    with Cache('./.cache/1'):
+    with Cache('./.cache/tests/1'):
         Choose.clear_all_tasks()
