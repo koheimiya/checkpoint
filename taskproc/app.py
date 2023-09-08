@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import Any
+from typing import Any, Type
 from pathlib import Path
 import sys
 import json
@@ -16,6 +16,38 @@ from .task import TaskBase
 
 
 LOGGER = logging.getLogger(__name__)
+
+
+def run_graph_with_args(
+        task_class: Type[TaskBase[Any]],
+        kwargs: dict[str, Any],
+        ):
+    task_instance = task_class(**kwargs)
+    if not dont_force_entrypoint:
+        task_instance.clear_task()
+    try:
+        _, stats = task_instance.run_graph(rate_limits=rate_limits, show_progress=not dont_show_progress, force_interactive=Context.interactive)
+    except FailedTaskError as e:
+        os.system('stty sane')  # Fix broken tty after Popen with tricky command. Need some fix in the future.
+        e.task.log_error()
+        raise
+
+    LOGGER.debug(f"stats:\n{stats}")
+
+    os.system('stty sane')  # Fix broken tty after Popen with tricky command. Need some fix in the future.
+    if task_instance.task_stdout.exists():
+        print("==== ENTRYPOINT STDOUT (DETACHED) ====")
+        print(open(task_instance.task_stdout).read())
+    else:
+        print("==== NO ENTRYPOINT STDOUT (DETACHED) ====")
+
+    if task_instance.task_stderr.exists():
+        print("==== ENTRYPOINT STDERR (DETACHED) ====")
+        print(open(task_instance.task_stderr).read())
+    else:
+        print("==== NO ENTRYPOINT STDERR (DETACHED) ====")
+    return 0
+    ...
 
 
 @click.command
@@ -83,7 +115,7 @@ def main(taskfile: Path,
     if not dont_force_entrypoint:
         entrypoint_task.clear_task()
     try:
-        _, stats = entrypoint_task.run_graph_with_stats(rate_limits=rate_limits, show_progress=not dont_show_progress, force_interactive=Context.interactive)
+        _, stats = entrypoint_task.run_graph(rate_limits=rate_limits, show_progress=not dont_show_progress, force_interactive=Context.interactive)
     except FailedTaskError as e:
         os.system('stty sane')  # Fix broken tty after Popen with tricky command. Need some fix in the future.
         e.task.log_error()

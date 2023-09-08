@@ -36,12 +36,12 @@ def test_graph():
     6...x
     """
     Choose.clear_all_tasks()
-    ans, stats = Choose(6, 3).run_graph_with_stats()
+    ans, stats = Choose(6, 3).run_graph()
     assert ans == 20
     assert sum(stats['stats'].values()) == 15
 
     """ 0 caches: """
-    ans, stats = Choose(6, 3).run_graph_with_stats()
+    ans, stats = Choose(6, 3).run_graph()
     assert ans == 20
     assert sum(stats['stats'].values()) == 0
 
@@ -56,7 +56,7 @@ def test_graph():
     6...x
     """
     Choose(3, 3).clear_task()
-    ans, stats = Choose(6, 3).run_graph_with_stats()
+    ans, stats = Choose(6, 3).run_graph()
     assert ans == 20
     assert sum(stats['stats'].values()) == 4
 
@@ -91,7 +91,7 @@ def test_multiple_tasks():
     TaskA.clear_all_tasks()
     TaskB.clear_all_tasks()
     TaskC.clear_all_tasks()
-    assert TaskC().run_graph(rate_limits={'<mychan>': 1}) == 'hello, world'
+    assert TaskC().run_graph(rate_limits={'<mychan>': 1})[0] == 'hello, world'
     assert TaskB._task_config.channels == (TaskB._task_config.name, '<mychan>')
     assert TaskC._task_config.db.compress_level == -1
 
@@ -136,7 +136,7 @@ def test_requires_directory():
     taskdir_me = CreateFile('Hello, me!').task_directory
 
     def check_output(name: str):
-        assert GreetWithFile(name).run_graph() == f'Hello, {name}!'
+        assert GreetWithFile(name).run_graph()[0] == f'Hello, {name}!'
 
     assert not list(taskdir_world.iterdir())
     assert not list(taskdir_me.iterdir())
@@ -185,7 +185,7 @@ class SummarizeParam(TaskBase):
 
 
 def test_json_param():
-    res = SummarizeParam(x=[1, 2], y=dict(zip(range(3), 'abc')), z=42).run_graph()
+    res, _ = SummarizeParam(x=[1, 2], y=dict(zip(range(3), 'abc')), z=42).run_graph()
     assert res == {'x': 2, 'y': 3, 'z': None}
 
 
@@ -210,10 +210,10 @@ class DownstreamTask(TaskBase):
 def test_mapping():
     MultiResultTask.clear_all_tasks()
     DownstreamTask.clear_all_tasks()
-    assert DownstreamTask().run_graph() == '42'
+    assert DownstreamTask().run_graph()[0] == '42'
 
 
-class PrefixedJob(TaskBase, prefix_command='bash tests/run_with_hello.bash'):
+class PrefixedJob(TaskBase, prefix_command='bash tests/run_with_hello.bash', channel='mychan'):
     def run_task(self) -> None:
         print('world')
         return
@@ -228,6 +228,17 @@ def test_prefix_command(capsys):
     assert captured.err == ''
 
     assert open(task.task_stdout, 'r').read() == '=== caller log ===\nhello\n=== callee log ===\nworld\n'
+
+
+def test_prefix_command2(capsys):
+    PrefixedJob.clear_all_tasks()
+    task = PrefixedJob()
+    task.run_graph(executor=ThreadPoolExecutor(max_workers=1), prefixes={'mychan': ''})
+    captured = capsys.readouterr()
+    assert captured.out == ''
+    assert captured.err == ''
+
+    assert open(task.task_stdout, 'r').read() == '=== caller log ===\n=== callee log ===\nworld\n'
 
 
 class SleepTask(TaskBase):
@@ -260,7 +271,7 @@ class InteractiveJob(TaskBase):
         return
 
 
-def test_prefix_command2(capsys):
+def test_interactive(capsys):
     InteractiveJob.clear_all_tasks()
     task = InteractiveJob()
     task.run_graph(executor=ThreadPoolExecutor(max_workers=1), force_interactive=True)

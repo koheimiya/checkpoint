@@ -2,6 +2,7 @@
 from __future__ import annotations
 from contextlib import ExitStack
 from datetime import datetime
+from sys import prefix
 from typing import Any, Mapping
 from typing_extensions import Self, runtime_checkable, Protocol
 from collections import defaultdict
@@ -30,13 +31,11 @@ class TaskHandlerProtocol(Protocol):
     @property
     def source_timestamp(self) -> datetime: ...
     @property
-    def is_interactive(self) -> bool: ...
-    @property
     def directory(self) -> Path: ...
     def to_tuple(self) -> TaskKey: ...
     def get_prerequisites(self) -> Mapping[str, TaskHandlerProtocol]: ...
     def peek_timestamp(self) -> datetime | None: ...
-    def set_result(self, execute_locally: bool, force_interactive: bool) -> None: ...
+    def set_result(self, execute_locally: bool, force_interactive: bool, prefix_command: str | None) -> None: ...
     def log_error(self) -> None: ...
 
 
@@ -129,9 +128,6 @@ class TaskGraph:
             out[path].append(args)
         return dict(out)
 
-    def interactive_tasks(self) -> list[TaskKey]:
-        return [x for x in self.G if self.get_task(x).is_interactive]
-
 
 def run_task_graph(
         graph: TaskGraph,
@@ -140,14 +136,14 @@ def run_task_graph(
         dump_graphs: bool = False,
         show_progress: bool = False,
         force_interactive: bool = False,
+        prefixes: dict[str, str] | None = None,
         ) -> dict[str, Any]:
     """ Consume task graph concurrently.
     """
-    interactive_tasks = graph.interactive_tasks()
-    if (interactive_tasks or force_interactive) and isinstance(executor, ProcessPoolExecutor):
-        LOGGER.warning(f'Interactive mode is detected while the executor is ProcessPoolExecutor: {interactive_tasks!r}, {force_interactive=}. Override it with ThreadPoolExecutor.')
+    if force_interactive and isinstance(executor, ProcessPoolExecutor):
+        LOGGER.warning(f'Interactive mode is detected. Concurrent execution is disabled.')
         executor = Context.get_executor(executor_name='thread')
-    if interactive_tasks and show_progress:
+    if force_interactive and show_progress:
         show_progress = False
         LOGGER.warning(f'Interactive task is detected while `show_progress` is set True. The progress bars is turned off.')
 
@@ -189,24 +185,25 @@ def run_task_graph(
 
             # Submit all leaf tasks
             leftover: dict[ChannelLabels, list[TaskKey]] = {}
-            for queue, keys in standby.items():
-                if any(q in rate_limits for q in queue):
-                    free = min(rate_limits[q] - occupied[q] for q in queue if q in rate_limits)
+            for channels, keys in standby.items():
+                if any(chan in rate_limits for chan in channels):
+                    free = min(rate_limits[chan] - occupied[chan] for chan in channels if chan in rate_limits)
                     to_submit, to_hold = keys[:free], keys[free:]
-                    for q in queue:
-                        if q in occupied:
-                            occupied[q] += len(to_submit)
+                    for chan in channels:
+                        if chan in occupied:
+                            occupied[chan] += len(to_submit)
                     if to_hold:
-                        leftover[queue] = to_hold
+                        leftover[channels] = to_hold
                 else:
                     to_submit = keys
 
                 for key in to_submit:
                     runner = _TaskRunner(
-                            queue=queue,
+                            channels=channels,
                             task_data=cloudpickle.dumps(graph.get_task(key)),
                             execute_locally=isinstance(executor, ProcessPoolExecutor),
                             force_interactive=force_interactive,
+                            prefix_command=_get_prefix_command(channels=channels, prefixes=prefixes),
                             )
                     if not force_interactive:
                         future = executor.submit(runner)
@@ -228,17 +225,17 @@ def run_task_graph(
                     progressbars[x_done[0]].update()
 
                 # Update occupied
-                for q in queue_done:
-                    if q in occupied:
-                        occupied[q] -= 1
-                        assert occupied[q] >= 0
+                for chan in queue_done:
+                    if chan in occupied:
+                        occupied[chan] -= 1
+                        assert occupied[chan] >= 0
 
                 # Remove node from graph
                 ys = graph.pop_with_new_leaves(x_done)
 
                 # Update standby
-                for queue, task in ys.items():
-                    standby[queue].extend(task)
+                for channels, task in ys.items():
+                    standby[channels].extend(task)
 
     # Sanity check
     assert graph.size == 0, f'Graph is not empty. Should not happen.'
@@ -263,13 +260,31 @@ def try_getting_result(future: Future[tuple[ChannelLabels, TaskKey]], task_key: 
 
 @dataclass
 class _TaskRunner:
-    queue: ChannelLabels
+    channels: ChannelLabels
     task_data: bytes
     execute_locally: bool
     force_interactive: bool
+    prefix_command: str | None
 
     def __call__(self) -> tuple[ChannelLabels, TaskKey]:
         task = cloudpickle.loads(self.task_data)
         assert isinstance(task, TaskHandlerProtocol)
-        task.set_result(execute_locally=self.execute_locally, force_interactive=self.force_interactive)
-        return self.queue, task.to_tuple()
+        task.set_result(
+                execute_locally=self.execute_locally,
+                force_interactive=self.force_interactive,
+                prefix_command=self.prefix_command,
+                )
+        return self.channels, task.to_tuple()
+
+
+def _get_prefix_command(channels: ChannelLabels, prefixes: dict[str, str] | None) -> str | None:
+    if prefixes is None:
+        return None
+    hit = [(chan, prefixes[chan]) for chan in channels if chan in prefixes]
+    if not hit:
+        return None
+    else:
+        if len(hit) > 1:
+            LOGGER.warn(f'Multiple prefixes hit: {channels=}, {hit=}. Using the first.')
+        _, p = hit[0]
+        return p

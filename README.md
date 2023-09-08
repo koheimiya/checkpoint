@@ -177,17 +177,6 @@ class TaskWithJobScheduler(TaskBase, prefix_command='jbsub -interactive -tty -qu
     ...
 ```
 
-
-### Interactive tasks
-Interactive task is beneficial for debugging (e.g., with breakpoints) but harmful for parallel computing.
-In `taskproc`, all the tasks are executed detached by default.
-One can make them interactive by explicitly specifying like so:
-```python
-
-class InteractiveTask(TaskBase, interactive=True):
-    ...
-```
-
 ### Execution policy configuration
 
 One can control the task execution with `concurrent.futures.Executor` class:
@@ -254,6 +243,5 @@ Below is the list of the built-in properties/methods of `TaskBase`. Do not overr
 ## TODO
 - [ ] Add `.parse_arg()` function to activate CLI argument parsing
 - [ ] Make the cache path argument explicit and the resulting directories visible.
-- [ ] Queue-wise prefix allocation
 - [ ] Add local executor
 - [ ] Task graph visualizer

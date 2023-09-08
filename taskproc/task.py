@@ -1,7 +1,7 @@
 from __future__ import annotations
 from collections.abc import Iterable
 from contextlib import redirect_stderr, redirect_stdout, ExitStack
-from typing import Callable, Concatenate, Generic, Mapping, Protocol, Sequence, Type, TypeVar, Any, cast
+from typing import Callable, Concatenate, Generic, Mapping, Sequence, Type, TypeVar, Any, cast
 from typing_extensions import ParamSpec, get_origin, overload
 from dataclasses import dataclass
 from datetime import datetime
@@ -42,7 +42,6 @@ class TaskConfig(Generic[R]):
             channels: tuple[str, ...],
             compress_level: int,
             prefix_command: str,
-            interactive: bool,
             ) -> None:
 
         self.task_class = task_class
@@ -50,9 +49,6 @@ class TaskConfig(Generic[R]):
         self.compress_level = compress_level
         self.channels = (self.name,) + channels
         self.prefix_command = prefix_command
-        self.interactive = interactive
-        if self.interactive and self.prefix_command:
-            LOGGER.warning(f'`interactive` is set True, nullifying the effect of `prefix_command`={self.prefix_command!r}')
         self.worker_registry: dict[Json, TaskWorker[R]] = {}
 
 
@@ -125,33 +121,37 @@ class TaskWorker(Generic[R]):
         except RuntimeError:
             return None
 
-    def set_result(self, execute_locally: bool = False, force_interactive: bool  = False) -> None:
+    def set_result(self, execute_locally: bool = False, force_interactive: bool = False, prefix_command: str | None = None) -> None:
         self.dirobj.initialize()
-        self.run_and_save_instance_task(execute_locally=execute_locally, force_interactive=force_interactive)
+        self.run_and_save_instance_task(
+                execute_locally=execute_locally,
+                force_interactive=force_interactive,
+                prefix_command=prefix_command,
+                )
 
     def log_error(self) -> None:
-        if not self.config.interactive:
-            task_info = {
-                    'name': self.config.name,
-                    'id': self.task_id,
-                    'args': self.task_args,
-                    }
-            LOGGER.error(f'Error occurred while running detached task {task_info}')
-            LOGGER.error(f'Here is the detached stdout ({self.stdout_path}):')
-            with open(self.stdout_path) as f:
-                LOGGER.error(f.read())
-            LOGGER.error(f'Here is the detached stderr ({self.stderr_path}):')
-            with open(self.stderr_path) as f:
-                LOGGER.error(f.read())
+        task_info = {
+                'name': self.config.name,
+                'id': self.task_id,
+                'args': self.task_args,
+                }
+        LOGGER.error(f'Error occurred while running detached task {task_info}')
+        LOGGER.error(f'Here is the detached stdout ({self.stdout_path}):')
+        with open(self.stdout_path) as f:
+            LOGGER.error(f.read())
+        LOGGER.error(f'Here is the detached stderr ({self.stderr_path}):')
+        with open(self.stderr_path) as f:
+            LOGGER.error(f.read())
 
-    def run_and_save_instance_task(self, execute_locally: bool, force_interactive: bool) -> None:
-        if self.config.interactive or force_interactive:
-            if self.config.prefix_command:
-                LOGGER.warning(f'Ignore prefix command and enter interactive mode. {self.config.prefix_command=}')
+    def run_and_save_instance_task(self, execute_locally: bool, force_interactive: bool, prefix_command: str | None = None) -> None:
+        prefix = prefix_command if prefix_command is not None else self.config.prefix_command
+        if force_interactive:
+            if prefix:
+                LOGGER.warning(f'Ignore prefix command and enter interactive mode. {prefix=}')
             res = self.instance.run_task()
             # self.config.db.save(self.arg_key, res)
             self.dirobj.save_result(res)
-        elif execute_locally and self.config.prefix_command == '':
+        elif execute_locally and prefix == '':
             res = self.run_instance_task_with_captured_output()
             # self.config.db.save(self.arg_key, res)
             self.dirobj.save_result(res)
@@ -171,7 +171,7 @@ worker.dirobj.save_result(res)
                 with open(worker_path, 'wb') as worker_ref:
                     cloudpickle.dump(self, worker_ref)
 
-                shell_command = ' '.join([self.config.prefix_command, sys.executable, '-c', repr(pycmd)])
+                shell_command = ' '.join([prefix, sys.executable, '-c', repr(pycmd)])
                 res = subprocess.run(
                         shell_command,
                         shell=True, text=True,
@@ -212,10 +212,6 @@ worker.dirobj.save_result(res)
     @property
     def task_args(self) -> dict[str, Any]:
         return json.loads(self.arg_key)
-
-    @property
-    def is_interactive(self) -> bool:
-        return self.config.interactive
 
     @property
     def stdout_path(self) -> Path:
@@ -284,7 +280,6 @@ class TaskBase(Generic[R]):
 
         compress_level = kwargs.pop('compress_level', 9)
         prefix_command = kwargs.pop('prefix_command', '')
-        interactive = kwargs.pop('interactive', False)
 
         # Fill missing requirement
         ann = inspect.get_annotations(cls, eval_str=True)
@@ -299,7 +294,6 @@ class TaskBase(Generic[R]):
                 channels=channels,
                 compress_level=compress_level,
                 prefix_command=prefix_command,
-                interactive=interactive,
                 )
 
         # Swap initializer to make __init__ lazy
@@ -344,28 +338,10 @@ class TaskBase(Generic[R]):
             max_workers: int | None = None,
             rate_limits: dict[str, int] | None = None,
             detect_source_change: bool | None = None,
-            show_progress: bool = False,
-            force_interactive: bool = False,
-            ) -> R:
-        assert isinstance(self, TaskBase)
-        return self.run_graph_with_stats(
-                executor=executor,
-                max_workers=max_workers,
-                rate_limits=rate_limits,
-                detect_source_change=detect_source_change,
-                show_progress=show_progress,
-                force_interactive=force_interactive,
-                )[0]
-
-    def run_graph_with_stats(
-            self, *,
-            executor: Executor | None = None,
-            max_workers: int | None = None,
-            rate_limits: dict[str, int] | None = None,
-            detect_source_change: bool | None = None,
             dump_generations: bool = False,
             show_progress: bool = False,
             force_interactive: bool = False,
+            prefixes: dict[str, str] | None = None,
             ) -> tuple[R, dict[str, Any]]:
         assert isinstance(self, TaskBase)
         if detect_source_change is None:
@@ -384,6 +360,7 @@ class TaskBase(Generic[R]):
                 dump_graphs=dump_generations,
                 show_progress=show_progress,
                 force_interactive=force_interactive,
+                prefixes=prefixes,
                 )
         return self._task_worker.get_result(), stats
 
