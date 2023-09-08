@@ -148,8 +148,8 @@ def run_task_graph(
         LOGGER.warning(f'Interactive mode is detected while the executor is ProcessPoolExecutor: {interactive_tasks!r}, {force_interactive=}. Override it with ThreadPoolExecutor.')
         executor = Context.get_executor(executor_name='thread')
     if interactive_tasks and show_progress:
-        LOGGER.warning(f'Interactive task is detected while `show_progress` is set True. The progress bars may interfere with the task output.')
-
+        show_progress = False
+        LOGGER.warning(f'Interactive task is detected while `show_progress` is set True. The progress bars is turned off.')
 
     stats = {k: len(args) for k, args in graph.get_nodes_by_task().items()}
     LOGGER.debug(f'Following tasks will be called: {stats}')

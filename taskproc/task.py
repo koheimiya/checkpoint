@@ -75,6 +75,8 @@ class TaskWorker(Generic[R]):
         self.config = config
         self.instance = instance
         self.arg_key = arg_key
+
+        self.check_requirements_set()
         self.dirobj = config.db.get_instance_dir(
                 key=arg_key,
                 deps={k: w.dirobj.path for k, w in self.get_prerequisites().items()}
@@ -90,6 +92,17 @@ class TaskWorker(Generic[R]):
 
     def to_tuple(self) -> TaskKey:
         return (self.config.name, self.arg_key)
+
+    def check_requirements_set(self) -> None:
+        cls = self.config.task_class
+        inst = self.instance
+        unset = []
+        for name, v in inspect.getmembers(cls):
+            if isinstance(v, Req):
+                if not v.is_set_on(inst):
+                    unset.append(name)
+        if unset:
+            raise ValueError(f'Some requirements are not set on the task {cls.__name__}: {unset}')
 
     def get_prerequisites(self) -> dict[str, TaskWorker[Any]]:
         cls = self.config.task_class
@@ -458,6 +471,9 @@ class _MappedTask(Generic[R]):
 
 
 class Req(Generic[T, R]):
+    def is_set_on(self, obj: TaskBase[Any]) -> bool:
+        return hasattr(obj, self.private_name)
+
     def __set_name__(self, _: Any, name: str) -> None:
         self.public_name = name
         self.private_name = '_requires__' + name
