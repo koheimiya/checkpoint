@@ -339,14 +339,14 @@ class TaskBase(Generic[R]):
         self._task_worker.clear()
 
     def run_graph(
-            self: TaskClassProtocol[T], *,
+            self, *,
             executor: Executor | None = None,
             max_workers: int | None = None,
             rate_limits: dict[str, int] | None = None,
             detect_source_change: bool | None = None,
             show_progress: bool = False,
             force_interactive: bool = False,
-            ) -> T:
+            ) -> R:
         assert isinstance(self, TaskBase)
         return self.run_graph_with_stats(
                 executor=executor,
@@ -358,7 +358,7 @@ class TaskBase(Generic[R]):
                 )[0]
 
     def run_graph_with_stats(
-            self: TaskClassProtocol[T], *,
+            self, *,
             executor: Executor | None = None,
             max_workers: int | None = None,
             rate_limits: dict[str, int] | None = None,
@@ -366,7 +366,7 @@ class TaskBase(Generic[R]):
             dump_generations: bool = False,
             show_progress: bool = False,
             force_interactive: bool = False,
-            ) -> tuple[T, dict[str, Any]]:
+            ) -> tuple[R, dict[str, Any]]:
         assert isinstance(self, TaskBase)
         if detect_source_change is None:
             detect_source_change = Context.detect_source_change
@@ -391,20 +391,11 @@ class TaskBase(Generic[R]):
         return self._task_worker.get_result()
 
     @overload
-    def __getitem__(self: TaskClassProtocol[Sequence[T]], key: int) -> _MappedTask[T]: ...
+    def __getitem__(self: TaskBase[Sequence[T]], key: int) -> _MappedTask[T]: ...
     @overload
-    def __getitem__(self: TaskClassProtocol[Mapping[K, T]], key: K) -> _MappedTask[T]: ...
-    def __getitem__(self: TaskClassProtocol[Mapping[K, T] | Sequence[T]], key: int | K) -> _MappedTask[T]:
+    def __getitem__(self: TaskBase[Mapping[K, T]], key: K) -> _MappedTask[T]: ...
+    def __getitem__(self: TaskBase[Mapping[K, T] | Sequence[T]], key: int | K) -> _MappedTask[T]:
         return _MappedTask(self, key)
-
-
-class TaskClassProtocol(Protocol[R]):
-    def __task_init__(self, *args: Any, **kwargs: Any) -> None: ...
-    def run_task(self) -> R: ...
-
-
-def cast_task(task: TaskClassProtocol[R]) -> TaskBase[R]:
-    return cast(TaskBase[R], task)
 
 
 def _serialize_function(fn: Callable[..., Any]) -> str:
@@ -438,7 +429,7 @@ class CustomJSONEncoder(json.JSONEncoder):
 
 @dataclass
 class _MappedTask(Generic[R]):
-    task: TaskClassProtocol[Mapping[Any, R] | Sequence[R]] | _MappedTask[Mapping[Any, R] | Sequence[R]]
+    task: TaskBase[Mapping[Any, R] | Sequence[R]] | _MappedTask[Mapping[Any, R] | Sequence[R]]
     key: Any
 
     def get_origin(self) -> TaskBase[Any]:
@@ -446,7 +437,7 @@ class _MappedTask(Generic[R]):
         if isinstance(x, _MappedTask):
             return x.get_origin()
         else:
-            return cast_task(x)
+            return x
 
     def get_args(self) -> list[Any]:
         out = []
@@ -530,7 +521,7 @@ class Const(Generic[R]):
         return self.value
 
 
-RealTask = TaskClassProtocol[R] | _MappedTask[R]
+RealTask = TaskBase[R] | _MappedTask[R]
 Task = RealTask[R] | Const[R]
 
 

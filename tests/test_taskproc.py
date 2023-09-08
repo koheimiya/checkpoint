@@ -260,7 +260,7 @@ class InteractiveJob(TaskBase):
         return
 
 
-def test_prefix_command(capsys):
+def test_prefix_command2(capsys):
     InteractiveJob.clear_all_tasks()
     task = InteractiveJob()
     task.run_graph(executor=ThreadPoolExecutor(max_workers=1), force_interactive=True)
