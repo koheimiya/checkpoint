@@ -35,7 +35,7 @@ class TaskHandlerProtocol(Protocol):
     def get_prerequisites(self) -> Mapping[str, TaskHandlerProtocol]: ...
     def peek_timestamp(self) -> datetime | None: ...
     def set_result(self, execute_locally: bool, force_interactive: bool, prefix_command: str | None) -> None: ...
-    def log_error(self) -> None: ...
+    def dump_error_msg(self) -> str: ...
 
 
 @dataclass
@@ -242,10 +242,9 @@ def run_task_graph(
 
 
 class FailedTaskError(Exception):
-    def __init__(self, task: TaskHandlerProtocol, exception: Exception, msg: str):
+    def __init__(self, task: TaskHandlerProtocol, msg: str):
         super().__init__(msg)
         self.task = task
-        self.exception = exception
 
 
 def try_getting_result(future: Future[tuple[ChannelLabels, TaskKey]], task_key: TaskKey, graph: TaskGraph) -> tuple[ChannelLabels, TaskKey]:
@@ -253,7 +252,7 @@ def try_getting_result(future: Future[tuple[ChannelLabels, TaskKey]], task_key: 
         return future.result()
     except Exception as e:
         task = graph.get_task(task_key)
-        raise FailedTaskError(task, e, msg=f'Exception occurred in {task_key}, see logs at {str(task.directory)}') from e
+        raise FailedTaskError(task, msg=task.dump_error_msg()) from e
 
 
 @dataclass

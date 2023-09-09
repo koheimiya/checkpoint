@@ -22,7 +22,7 @@ import sys
 
 from .types import Json, TaskKey
 from .database import Database
-from .graph import TaskGraph, run_task_graph, FailedTaskError
+from .graph import TaskGraph, run_task_graph
 
 
 LOGGER = logging.getLogger(__name__)
@@ -151,19 +151,44 @@ class TaskWorker(Generic[R]):
         except RuntimeError:
             return None
 
-    def log_error(self) -> None:
+    def dump_error_msg(self) -> str:
         task_info = {
                 'name': self.config.name,
                 'id': self.task_id,
-                'args': self.task_args,
                 }
-        LOGGER.error(f'Error occurred while running detached task {task_info}')
-        LOGGER.error(f'Here is the detached stdout ({self.stdout_path}):')
-        with open(self.stdout_path) as f:
-            LOGGER.error(f.read())
-        LOGGER.error(f'Here is the detached stderr ({self.stderr_path}):')
-        with open(self.stderr_path) as f:
-            LOGGER.error(f.read())
+        msg = ''
+        def add_msgline(s: str, prompt = 'LOG > ', end='\n'):
+            nonlocal msg
+            msg += prompt + s + end
+
+        def peek_file(path: Path):
+            PEEK = 10
+            with open(path) as f:
+                lines = list(enumerate(f.readlines()))
+                n = len(lines)
+                digits = len(str(n))
+                if n == 0:
+                    add_msgline('(EMPTY)')
+                elif n <= PEEK * 2:
+                    for i, line in lines:
+                        prompt = ('LINE {:0'+str(digits)+'d} |').format(i)
+                        add_msgline(line, prompt=prompt, end='')
+                else:
+                    for i, line in lines[:PEEK]:
+                        prompt = ('{:0'+str(digits)+'d} |').format(i)
+                        add_msgline(line, prompt=prompt, end='')
+                    add_msgline('(Too long, skip to the end)')
+                    for i, line in lines[-PEEK:]:
+                        prompt = ('{:0'+str(digits)+'d} |').format(i)
+                        add_msgline(line, prompt=prompt, end='')
+
+        add_msgline(f'Error occurred while running detached task {task_info}', prompt='')
+        add_msgline(f'Here is the detached stdout ({self.stdout_path}):')
+        peek_file(self.stdout_path)
+        add_msgline(f'Here is the detached stderr ({self.stderr_path}):')
+        peek_file(self.stderr_path)
+        add_msgline(f'For more details, see {str(self.directory)}')
+        return msg
 
     def set_result(self, execute_locally: bool, force_interactive: bool, prefix_command: str | None = None) -> None:
         self.dirobj.initialize()
@@ -572,11 +597,8 @@ def _run_with_argparse(
                     force_interactive=params.interactive,
                     prefixes=params.prefix,
                     )
-        except FailedTaskError as e:
-            os.system('stty sane')  # Fix broken tty after Popen with tricky command. Need some fix in the future.
-            e.task.log_error()
-            raise
-        else:
+        finally:
+            # Fix broken tty after Popen with tricky command. Need some fix in the future.
             os.system('stty sane')
 
     LOGGER.debug(f"stats:\n{stats}")

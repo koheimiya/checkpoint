@@ -71,14 +71,18 @@ class Choose(TaskBase):
         # The return values of the prerequisite tasks are accessible via the descriptors:
         return self.prev1 + self.prev2
 
-# To run the task as well as the upstreams, use the `run_graph()` method inside `Cache(cache_dir)`.
 with Cache('./cache'):
-    ans = Choose(6, 3).run_graph()  # `ans` should be 6 Choose 3, which is 20.
+    # Construct a task with its upstreams.
+    # Instantiation of `TaskBase` should be inside `Cache`.
+    task = Choose(6, 3)
 
-    # It greedily executes all the necessary tasks as parallel as possible
-    # and then spits out the return value of the task on which we call `run_graph()`.
-    # The return values of the intermediate tasks are cached at `./cache`
-    # and reused on the fly whenever possible.
+# To run the task graph, use the `run_graph()` method.
+ans, stats = task.run_graph()  # `ans` should be 6 Choose 3, which is 20.
+
+# It greedily executes all the necessary tasks in the graph as parallel as possible
+# and then produces the return value of the task on which we call `run_graph()`, as well as the execution stats.
+# The return values of the intermediate tasks are cached at `./cache`
+# and reused on the fly whenever possible.
 ```
 
 ### Deleting cache
@@ -91,7 +95,7 @@ with Cache('./cache'):
     Choose(3, 3).clear_task()
 
     # `ans` is recomputed tracing back to the computation of `Choose(3, 3)`.
-    ans = Choose(6, 3).run_graph()
+    ans, _ = Choose(6, 3).run_graph()
     
     # Delete all the cache associated with `Choose`.
     Choose.clear_all_tasks()            
@@ -218,7 +222,7 @@ with Cache('./cache'):
 ```
 
 ### Commandline tool
-`taskproc`'s Task classes have a utility method for parsing commandline arguments.
+`TaskBase` have a utility classmethod to run with commandline arguments.
 For example,
 ```python
 # taskfile.py
@@ -252,5 +256,4 @@ Below is the list of the built-in properties/methods of `TaskBase`. Do not overr
 | `cli`                  | class    | method   | `run_graph` with command line arguments |
 
 ## TODO
-- [ ] Better stdout/stderr logging.
 - [ ] Simple task graph visualizer.
