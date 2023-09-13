@@ -10,7 +10,7 @@ import gzip
 import cloudpickle
 import diskcache as dc
 
-from .types import Json
+from .types import JsonStr
 
 
 T = TypeVar('T')
@@ -55,7 +55,7 @@ class Database(Generic[T]):
     def __post_init__(self) -> None:
         self.results_directory.mkdir(exist_ok=True)
 
-    def get_instance_dir(self, key: Json, deps: dict[str, Path]) -> InstanceDirectory[T]:
+    def get_instance_dir(self, key: JsonStr, deps: dict[str, Path]) -> InstanceDirectory[T]:
         return InstanceDirectory(
                 base_path=self.results_directory,
                 instance_id=self.id_table.get(key),
@@ -95,7 +95,7 @@ def _get_timestamp(path: Path) -> datetime:
 
 
 class InstanceDirectory(Generic[T]):
-    def __init__(self, base_path: Path, instance_id: int, argkey: Json, dependencies: dict[str, Path]):
+    def __init__(self, base_path: Path, instance_id: int, argkey: JsonStr, dependencies: dict[str, Path]):
         self.base_path = base_path
         self.task_id = instance_id
         self.argkey = argkey

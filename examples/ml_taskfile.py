@@ -1,12 +1,12 @@
 from typing import NewType
-from taskproc import TaskBase, Task, Requires, RequiresList
+from taskproc import Task, Future, Requires, RequiresList
 
 
 Data = NewType('Data', str)
 Model = NewType('Model', str)
 
 
-class LoadData(TaskBase):
+class LoadData(Task):
     def __init__(self, name: str):
         self.name = name
 
@@ -14,7 +14,7 @@ class LoadData(TaskBase):
         return Data('raw data')
 
 
-class PreprocessData(TaskBase):
+class PreprocessData(Task):
     raw_data: Requires[Data]
 
     def __init__(self, name: str, split_ratio: float, seed: int):
@@ -30,11 +30,11 @@ class PreprocessData(TaskBase):
         return {'train': train, 'valid': valid, 'test': test}
 
 
-class TrainModel(TaskBase):
+class TrainModel(Task):
     train_data: Requires[Data]
     valid_data: Requires[Data]
     
-    def __init__(self, train: Task[Data], valid: Task[Data], train_config: dict, seed: int):
+    def __init__(self, train: Future[Data], valid: Future[Data], train_config: dict, seed: int):
         self.train_data = train
         self.valid_data = valid
         self.train_config = train_config
@@ -45,11 +45,11 @@ class TrainModel(TaskBase):
         return model
 
 
-class TestModel(TaskBase):
+class TestModel(Task):
     test_data: Requires[Data]
     model: Requires[Model]
 
-    def __init__(self, test: Task[Data], trained_model: Task[Model]):
+    def __init__(self, test: Future[Data], trained_model: Future[Model]):
         self.test_data = test
         self.model = trained_model
     
@@ -57,22 +57,22 @@ class TestModel(TaskBase):
         return {'score': 42}
 
 
-class Main(TaskBase):
+class Main(Task):
     results: RequiresList[dict[str, float]]
 
     def __init__(self):
-        tasks: list[Task[dict]] = []
+        tasks: list[Future[dict]] = []
         for i in range(10):
             dataset = PreprocessData('mydata', split_ratio=.8, seed=i)
             trained = TrainModel(
                     train=dataset['train'],
                     valid=dataset['valid'],
                     train_config={'lr': .01},
-                    seed=i
+                    seed=i,
                     )
             result = TestModel(
                     test=dataset['test'],
-                    trained_model=trained
+                    trained_model=trained,
                     )
             tasks.append(result)
         self.results = tasks

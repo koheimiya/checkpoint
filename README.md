@@ -39,9 +39,9 @@ See [here](examples/ml_taskfile.py) for a typical usage of `taskproc`.
 Pipeline is a directed acyclic graph (DAG) of tasks with a single sink node (i.e., final task), where task is a unit of work represented with a class.
 Each task and its upstream dependencies are specified with a class definition like so:
 ```python
-from taskproc import TaskBase, Requires, Const, Cache
+from taskproc import Task, Requires, Const, Cache
 
-class Choose(TaskBase):
+class Choose(Task):
     """ Compute the binomial coefficient. """
     # Inside a task, we first declare the values that must be computed in upstream.
     # In this example, `Choose(n, k)` depends on `Choose(n - 1, k - 1)` and `Choose(n - 1, k)`,
@@ -73,7 +73,7 @@ class Choose(TaskBase):
 
 with Cache('./cache'):
     # Construct a task with its upstreams.
-    # Instantiation of `TaskBase` should be inside `Cache`.
+    # Instantiation of `Task` should be inside `Cache`.
     task = Choose(6, 3)
 
 # To run the task graph, use the `run_graph()` method.
@@ -103,9 +103,9 @@ with Cache('./cache'):
 
 ### Task IO
 
-The arguments of the `__init__` method can be anything JSON serializable + `Task`s:
+The arguments of the `__init__` method can be anything JSON serializable + `Future`s:
 ```python
-class MyTask(TaskBase):
+class MyTask(Task):
     def __init__(self, param1, param2):
         ...
 
@@ -124,11 +124,11 @@ List/dict of upstream tasks can be registered with `RequiresList` and `RequiresD
 ```python
 from taskproc import RequiresList, RequiresDict
 
-class SummarizeScores(TaskBase):
+class SummarizeScores(Task):
     score_list: RequiresList[float]
     score_dict: RequiresDict[str, float]
 
-    def __init__(self, task_dict: dict[str, Task[float]]):
+    def __init__(self, task_dict: dict[str, Future[float]]):
         self.score_list = [MyScore(i) for i in range(10)]
         self.score_dict = task_dict
 
@@ -142,18 +142,18 @@ The output of the `run_task` method should be serializable with `cloudpickle`,
 which is then compressed with `gzip`.
 The compression level can be changed as follows (defaults to 9).
 ```python
-class NoCompressionTask(TaskBase):
+class NoCompressionTask(Task):
     _task_compress_level = 0
     ...
 ```
 
 If the output is a dictionary, one can directly access its element:
 ```python
-class MultiOutputTask(TaskBase):
+class MultiOutputTask(Task):
     def run_task(self) -> dict[str, int]:
         return {'foo': 42, ...}
 
-class DownstreamTask(TaskBase):
+class DownstreamTask(Task):
     dep: Requires[int]
 
     def __init__(self):
@@ -166,7 +166,7 @@ Use `task.task_directory` to get a fresh path dedicated to each task.
 The directory is automatically created and managed along with the task cache:
 The contents of the directory are cleared at each task call and persist until the task is cleared.
 ```python
-class TrainModel(TaskBase):
+class TrainModel(Task):
     def run_task(self) -> str:
         ...
         model_path = self.task_directory / 'model.bin'
@@ -179,7 +179,7 @@ class TrainModel(TaskBase):
 Tasks can be run with job schedulers using `_task_prefix_command`, which will be inserted just before each task call.
 ```python
 
-class TaskWithJobScheduler(TaskBase):
+class TaskWithJobScheduler(Task):
     _task_prefix_command = 'jbsub -interactive -tty -queue x86_1h -cores 16+1 -mem 64g'
     ...
 ```
@@ -190,7 +190,7 @@ One can control the task execution with `concurrent.futures.Executor` class:
 ```python
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 
-class MyTask(TaskBase):
+class MyTask(Task):
     ...
 
 with Cache('./cache'):
@@ -203,11 +203,11 @@ with Cache('./cache'):
 
 One can also control the concurrency at a task/channel level:
 ```python
-class TaskUsingGPU(TaskBase):
+class TaskUsingGPU(Task):
     _task_channel = 'gpu'
     ...
 
-class AnotherTaskUsingGPU(TaskBase):
+class AnotherTaskUsingGPU(Task):
     _task_channel = ['gpu', 'memory']
     ...
 
@@ -222,12 +222,12 @@ with Cache('./cache'):
 ```
 
 ### Commandline tool
-`TaskBase` have a utility classmethod to run with commandline arguments.
+`Task` have a utility classmethod to run with commandline arguments.
 For example,
 ```python
 # taskfile.py
 
-class Main(TaskBase):
+class Main(Task):
     ...
 
 
@@ -238,7 +238,7 @@ Use `--help` option for more details.
 
 
 ### Built-in properties/methods
-Below is the list of the built-in properties/methods of `TaskBase`. Do not override these attributes in the subclass.
+Below is the list of the built-in properties/methods of `Task`. Do not override these attributes in the subclass.
 
 | Name | Owner | Type | Description |
 |--|--|--|--|
@@ -251,9 +251,13 @@ Below is the list of the built-in properties/methods of `TaskBase`. Do not overr
 | `run_task`             | instance | method   | Run the task |
 | `run_graph`            | instance | method   | Run the task after necessary upstream tasks and save the results in the cache |
 | `get_task_result`      | instance | method   | Directly get the result of the task (fails if the cache is missing) |
+| `to_json`              | instance | method   | Serialize itself as a JSON dictionary |
 | `clear_task`           | instance | method   | Clear the cache of the task instance |
 | `clear_all_tasks`      | class    | method   | Clear the cache of the task class |
 | `cli`                  | class    | method   | `run_graph` with command line arguments |
 
 ## TODO
+- [ ] Pydantic/dataclass support in task arguments.
+- [ ] Validate argument with schema.
+- [ ] Rethink of descriptor design: one cannot re-assign descriptor-ed Future in `__init__`.
 - [ ] Simple task graph visualizer.

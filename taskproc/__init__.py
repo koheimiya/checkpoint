@@ -8,12 +8,13 @@ Key features:
 Limitations:
     - No priority-based scheduling.
 """
-from .task import Task, TaskBase, Req, Requires, RequiresList, RequiresDict, Const, Cache
+from .future import Future
+from .task import Task, Req, Requires, RequiresList, RequiresDict, Const, Cache
 from .graph import FailedTaskError
 
 
 __EXPORT__ = [
-        Task, Const, TaskBase,
+        Future, Const, Task,
         Req, Requires, RequiresList, RequiresDict,
         Cache,
         FailedTaskError

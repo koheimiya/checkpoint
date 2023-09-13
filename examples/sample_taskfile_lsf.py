@@ -1,7 +1,7 @@
-from taskproc import TaskBase
+from taskproc import Task
 
 
-class Main(TaskBase):
+class Main(Task):
     _task_prefix_command: str = 'jbsub -interactive -tty -queue x86_1h -cores 4+1 -mem 8g'
     """ Example task """
     def run_task(self) -> None:

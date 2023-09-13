@@ -1,7 +1,7 @@
-from taskproc import TaskBase
+from taskproc import Task
 
 
-class Main(TaskBase):
+class Main(Task):
     """ Example task """
     def run_task(self) -> None:
         print('Hi there')

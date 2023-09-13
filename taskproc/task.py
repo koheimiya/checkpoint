@@ -3,7 +3,6 @@ from collections.abc import Iterable
 from contextlib import ContextDecorator, redirect_stderr, redirect_stdout, ExitStack, AbstractContextManager
 from typing import Callable, Concatenate, Generic, Literal, Mapping, Sequence, Type, TypeVar, Any, cast
 from typing_extensions import ParamSpec, get_origin, overload
-from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from concurrent.futures import Executor, ProcessPoolExecutor, ThreadPoolExecutor
@@ -20,7 +19,8 @@ import subprocess
 import sys
 
 
-from .types import Json, TaskKey
+from .types import JsonStr, TaskKey, JsonDict
+from .future import Future, MappedFuture, Const, FutureJSONEncoder, FutureMapperMixin
 from .database import Database
 from .graph import TaskGraph, run_task_graph
 
@@ -64,14 +64,14 @@ class TaskConfig(Generic[R]):
     """ Information specific to a task class (not instance) """
     def __init__(
             self,
-            task_class: Type[TaskBase[R]],
+            task_class: Type[Task[R]],
             cache_dir: Path,
             ) -> None:
 
         self.task_class = task_class
         self.cache_dir = cache_dir
         self.name = _serialize_function(task_class)
-        self.worker_registry: dict[Json, TaskWorker[R]] = {}
+        self.worker_registry: dict[JsonStr, TaskWorker[R]] = {}
 
     @cached_property
     def db(self) -> Database[R]:
@@ -88,7 +88,7 @@ class TaskConfig(Generic[R]):
 
 
 class TaskWorker(Generic[R]):
-    def __init__(self, config: TaskConfig[R], instance: TaskBase[R], arg_key: Json) -> None:
+    def __init__(self, config: TaskConfig[R], instance: Task[R], arg_key: JsonStr) -> None:
         self.config = config
         self.instance = instance
         self.arg_key = arg_key
@@ -287,8 +287,8 @@ worker.dirobj.save_result(res, worker.instance.task_compress_level)
         self.dirobj.delete()
 
 
-def wrap_task_init(init_method: Callable[Concatenate[TaskBase[R], P], None]) -> Callable[Concatenate[TaskBase[R], P], None]:
-    def wrapped_init(self: TaskBase, *args: P.args, **kwargs: P.kwargs) -> None:
+def wrap_task_init(init_method: Callable[Concatenate[Task[R], P], None]) -> Callable[Concatenate[Task[R], P], None]:
+    def wrapped_init(self: Task, *args: P.args, **kwargs: P.kwargs) -> None:
         config = self.task_config
         arg_key = _serialize_arguments(self.__init__, *args, **kwargs)
         worker = config.worker_registry.get(arg_key, None)
@@ -306,7 +306,7 @@ def wrap_task_init(init_method: Callable[Concatenate[TaskBase[R], P], None]) -> 
     return wrapped_init
 
 
-class TaskBase(Generic[R]):
+class Task(FutureMapperMixin, Generic[R]):
     _task_config: TaskConfig[R]
     _task_worker: TaskWorker[R]
     task_compress_level: int = 9
@@ -392,7 +392,7 @@ class TaskBase(Generic[R]):
             force_interactive: bool = False,
             prefixes: dict[str, str] | None = None,
             ) -> tuple[R, dict[str, Any]]:
-        assert isinstance(self, TaskBase)
+        assert isinstance(self, Task)
         graph = TaskGraph.build_from(self._task_worker, detect_source_change=detect_source_change)
 
         if executor is None:
@@ -416,12 +416,9 @@ class TaskBase(Generic[R]):
     def get_task_result(self) -> R:
         return self._task_worker.get_result()
 
-    @overload
-    def __getitem__(self: TaskBase[Sequence[T]], key: int) -> _MappedTask[T]: ...
-    @overload
-    def __getitem__(self: TaskBase[Mapping[K, T]], key: K) -> _MappedTask[T]: ...
-    def __getitem__(self: TaskBase[Mapping[K, T] | Sequence[T]], key: int | K) -> _MappedTask[T]:
-        return _MappedTask(self, key)
+    def to_json(self) -> JsonDict:
+        name, keys = self._task_worker.to_tuple()
+        return JsonDict({'__task__': name, '__args__': json.loads(keys)})
 
 
 def _serialize_function(fn: Callable[..., Any]) -> str:
@@ -434,80 +431,32 @@ def _normalize_arguments(fn: Callable[P, Any], *args: P.args, **kwargs: P.kwargs
     return params.arguments
 
 
-def _serialize_arguments(fn: Callable[P, Any], *args: P.args, **kwargs: P.kwargs) -> Json:
+def _serialize_arguments(fn: Callable[P, Any], *args: P.args, **kwargs: P.kwargs) -> JsonStr:
     arguments = _normalize_arguments(fn, *args, **kwargs)
-    return cast(Json, json.dumps(arguments, separators=(',', ':'), sort_keys=True, cls=CustomJSONEncoder))
-
-
-class CustomJSONEncoder(json.JSONEncoder):
-    def default(self, o):
-        if isinstance(o, TaskBase):
-            name, keys = o._task_worker.to_tuple()
-            return {'__task__': name, '__args__': json.loads(keys)}
-        elif isinstance(o, _MappedTask):
-            out = self.default(o.get_origin())
-            out['__key__'] = o.get_args()
-            return out
-        else:
-            # Let the base class default method raise the TypeError
-            return super().default(o)
-
-
-@dataclass
-class _MappedTask(Generic[R]):
-    task: TaskBase[Mapping[Any, R] | Sequence[R]] | _MappedTask[Mapping[Any, R] | Sequence[R]]
-    key: Any
-
-    def get_origin(self) -> TaskBase[Any]:
-        x = self.task
-        if isinstance(x, _MappedTask):
-            return x.get_origin()
-        else:
-            return x
-
-    def get_args(self) -> list[Any]:
-        out = []
-        x = self
-        while isinstance(x, _MappedTask):
-            out.append(x.key)
-            x = x.task
-        return out[::-1]
-
-    def get_task_result(self) -> R:
-        out = self.get_origin().get_task_result()
-        for k in self.get_args():
-            out = out[k]
-        return out
-
-    @overload
-    def __getitem__(self: _MappedTask[Sequence[T]], key: int) -> _MappedTask[T]: ...
-    @overload
-    def __getitem__(self: _MappedTask[Mapping[K, T]], key: K) -> _MappedTask[T]: ...
-    def __getitem__(self: _MappedTask[Mapping[K, T] | Sequence[T]], key: int | K) -> _MappedTask[T]:
-        return _MappedTask(self, key)
+    return cast(JsonStr, json.dumps(arguments, separators=(',', ':'), sort_keys=True, cls=FutureJSONEncoder))
 
 
 class Req(Generic[T, R]):
-    def is_set_on(self, obj: TaskBase[Any]) -> bool:
+    def is_set_on(self, obj: Task[Any]) -> bool:
         return hasattr(obj, self.private_name)
 
     def __set_name__(self, _: Any, name: str) -> None:
         self.public_name = name
         self.private_name = '_requires__' + name
 
-    def __set__(self, obj: TaskBase[Any], value: T) -> None:
+    def __set__(self, obj: Task[Any], value: T) -> None:
         setattr(obj, self.private_name, value)
 
     @overload
-    def __get__(self: Requires[U], obj: TaskBase[Any], _=None) -> U: ...
+    def __get__(self: Requires[U], obj: Task[Any], _=None) -> U: ...
     @overload
-    def __get__(self: RequiresList[U], obj: TaskBase[Any], _=None) -> list[U]: ...
+    def __get__(self: RequiresList[U], obj: Task[Any], _=None) -> list[U]: ...
     @overload
-    def __get__(self: RequiresDict[K, U], obj: TaskBase[Any], _=None) -> dict[K, U]: ...
-    def __get__(self, obj: TaskBase[Any], _=None) -> Any:
+    def __get__(self: RequiresDict[K, U], obj: Task[Any], _=None) -> dict[K, U]: ...
+    def __get__(self, obj: Task[Any], _=None) -> Any:
 
-        def get_result(task_like: Task[S]) -> S:
-            if isinstance(task_like, (TaskBase, _MappedTask, Const)):
+        def get_result(task_like: Future[S]) -> S:
+            if isinstance(task_like, (Task, MappedFuture, Const)):
                 return task_like.get_task_result()
             else:
                 raise TypeError(f'Unsupported requirement type: {type(task_like)}')
@@ -520,14 +469,14 @@ class Req(Generic[T, R]):
         else:
             return get_result(x)
 
-    def get_task_dict(self, obj: TaskBase[Any]) -> dict[str | None, TaskBase[Any]]:
+    def get_task_dict(self, obj: Task[Any]) -> dict[str | None, Task[Any]]:
         x = getattr(obj, self.private_name, None)
         assert x is not None, f'Requirement `{self.public_name}` is not set in {obj}.'
 
-        if isinstance(x, _MappedTask):
+        if isinstance(x, MappedFuture):
             x = x.get_origin()
 
-        if isinstance(x, TaskBase):
+        if isinstance(x, Task):
             return {None: x}
         elif isinstance(x, list):
             return {str(i): xi for i, xi in enumerate(x)}
@@ -539,25 +488,13 @@ class Req(Generic[T, R]):
             raise TypeError(f'Unsupported requirement type: {type(x)}')
 
 
-@dataclass(frozen=True)
-class Const(Generic[R]):
-    value: R
-
-    def get_task_result(self) -> R:
-        return self.value
-
-
-RealTask = TaskBase[R] | _MappedTask[R]
-Task = RealTask[R] | Const[R]
-
-
-Requires = Req[Task[R], R]
-RequiresList = Req[Sequence[Task[R]], list[R]]
-RequiresDict = Req[Mapping[K, Task[R]], dict[K, R]]
+Requires = Req[Future[R], R]
+RequiresList = Req[Sequence[Future[R]], list[R]]
+RequiresDict = Req[Mapping[K, Future[R]], dict[K, R]]
 
 
 def _run_with_argparse(
-        task_class: Type[TaskBase[Any]],
+        task_class: Type[Task[Any]],
         args: Sequence[str] | None,
         defaults: argparse.Namespace | None,
         ) -> None:

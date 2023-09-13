@@ -14,7 +14,7 @@ from tqdm.auto import tqdm
 import cloudpickle
 import networkx as nx
 
-from .types import Json, TaskKey
+from .types import JsonStr, TaskKey
 
 
 LOGGER = logging.getLogger(__name__)
@@ -120,8 +120,8 @@ class TaskGraph:
         self.G.remove_node(x)
         return self._group_by_channels(new_leaves)
 
-    def get_nodes_by_task(self) -> dict[str, list[Json]]:
-        out: dict[str, list[Json]] = defaultdict(list)
+    def get_nodes_by_task(self) -> dict[str, list[JsonStr]]:
+        out: dict[str, list[JsonStr]] = defaultdict(list)
         for x in self.G:
             path, args = x
             out[path].append(args)

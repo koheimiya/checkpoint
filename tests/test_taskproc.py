@@ -1,14 +1,14 @@
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 import pytest
-from taskproc import TaskBase, Task, Requires, Const, RequiresDict, Cache
+from taskproc import Task, Future, Requires, Const, RequiresDict, Cache
 import time
 from taskproc.graph import FailedTaskError
 
 from taskproc.task import RequiresList
 
 
-class Choose(TaskBase):
+class Choose(Task):
     prev1: Requires[int]
     prev2: Requires[int]
 
@@ -62,7 +62,7 @@ def test_graph():
     assert sum(stats['stats'].values()) == 4
 
 
-class TaskA(TaskBase):
+class TaskA(Task):
     task_channel = ['<mychan>', '<another_chan>']
     def __init__(self): ...
 
@@ -70,7 +70,7 @@ class TaskA(TaskBase):
         return 'hello'
 
 
-class TaskB(TaskBase):
+class TaskB(Task):
     task_channel = '<mychan>'
     def __init__(self): ...
     
@@ -78,7 +78,7 @@ class TaskB(TaskBase):
         return 'world'
 
 
-class TaskC(TaskBase):
+class TaskC(Task):
     task_compress_level = 0
     a: Requires[str]
     b: Requires[str]
@@ -102,7 +102,7 @@ def test_multiple_tasks():
     assert main.task_compress_level == 0
 
 
-class TaskRaise(TaskBase):
+class TaskRaise(Task):
     def __init__(self): ...
     def run_task(self):
         raise ValueError(42)
@@ -114,7 +114,7 @@ def test_raise():
         TaskRaise().run_graph()
 
 
-class CreateFile(TaskBase):
+class CreateFile(Task):
     def __init__(self, content: str):
         self.content = content
 
@@ -125,7 +125,7 @@ class CreateFile(TaskBase):
         return str(outpath)
 
 
-class GreetWithFile(TaskBase):
+class GreetWithFile(Task):
     filepath: Requires[str]
 
     def __init__(self, name: str):
@@ -170,7 +170,7 @@ def test_requires_directory():
     check_output('world')                # file recreated
 
 
-class CountElem(TaskBase):
+class CountElem(Task):
     def __init__(self, x: list | dict):
         self.x = x
 
@@ -178,7 +178,7 @@ class CountElem(TaskBase):
         return len(self.x)
 
 
-class SummarizeParam(TaskBase):
+class SummarizeParam(Task):
     d_counts: RequiresDict[str, int]
 
     def __init__(self, **params: Any):
@@ -198,7 +198,7 @@ def test_json_param():
     assert res == {'x': 2, 'y': 3, 'z': None}
 
 
-class MultiResultTask(TaskBase):
+class MultiResultTask(Task):
     def __init__(self) -> None:
         pass
 
@@ -206,7 +206,7 @@ class MultiResultTask(TaskBase):
         return {'hello': ['world', '42']}
 
 
-class DownstreamTask(TaskBase):
+class DownstreamTask(Task):
     up: Requires[str]
 
     def __init__(self) -> None:
@@ -223,7 +223,7 @@ def test_mapping():
     assert DownstreamTask().run_graph()[0] == '42'
 
 
-class PrefixedJob(TaskBase):
+class PrefixedJob(Task):
     task_prefix_command = 'bash tests/run_with_hello.bash'
     task_channel = 'mychan'
     def run_task(self) -> None:
@@ -255,9 +255,9 @@ def test_prefix_command2(capsys):
     assert open(task.task_stdout, 'r').read() == '=== caller log ===\n=== callee log ===\nworld\n'
 
 
-class SleepTask(TaskBase):
+class SleepTask(Task):
     prevs: RequiresList[float]
-    def __init__(self, *prevs: Task[float]):
+    def __init__(self, *prevs: Future[float]):
         self.prevs = list(prevs)
 
     def run_task(self):
@@ -280,7 +280,7 @@ def test_sleep_task():
     assert elapsed < 2
 
 
-class InteractiveJob(TaskBase):
+class InteractiveJob(Task):
     def run_task(self) -> None:
         print('world')
         return
