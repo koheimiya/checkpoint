@@ -101,9 +101,10 @@ with Cache('./cache'):
     Choose.clear_all_tasks()            
 ```
 
-### Task IO
+### Task Composition
 
-The arguments of the `__init__` method can be anything JSON serializable + `Future`s:
+The arguments of the `__init__` method can be anything JSON serializable + `Future`s,
+where `Future` is either `Task` or `Const`.
 ```python
 class MyTask(Task):
     def __init__(self, param1, param2):
@@ -143,11 +144,12 @@ which is then compressed with `gzip`.
 The compression level can be changed as follows (defaults to 9).
 ```python
 class NoCompressionTask(Task):
-    _task_compress_level = 0
+    task_compress_level = 0
     ...
 ```
 
-If the output is a dictionary, one can directly access its element:
+If the output is a list or a dictionary, one can directly access its element by indexing.
+The result is also a `Future`.
 ```python
 class MultiOutputTask(Task):
     def run_task(self) -> dict[str, int]:
@@ -176,11 +178,11 @@ class TrainModel(Task):
 
 
 ### Job scheduling and prefixes
-Tasks can be run with job schedulers using `_task_prefix_command`, which will be inserted just before each task call.
+Tasks can be run with job schedulers using `task_prefix_command`, which will be inserted just before each task call.
 ```python
 
 class TaskWithJobScheduler(Task):
-    _task_prefix_command = 'jbsub -interactive -tty -queue x86_1h -cores 16+1 -mem 64g'
+    task_prefix_command = 'jbsub -interactive -tty -queue x86_1h -cores 16+1 -mem 64g'
     ...
 ```
 
@@ -204,11 +206,11 @@ with Cache('./cache'):
 One can also control the concurrency at a task/channel level:
 ```python
 class TaskUsingGPU(Task):
-    _task_channel = 'gpu'
+    task_channel = 'gpu'
     ...
 
 class AnotherTaskUsingGPU(Task):
-    _task_channel = ['gpu', 'memory']
+    task_channel = ['gpu', 'memory']
     ...
 
 with Cache('./cache'):
