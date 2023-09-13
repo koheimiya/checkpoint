@@ -10,7 +10,7 @@ class LoadData(Task):
     def __init__(self, name: str):
         self.name = name
 
-    def run_task(self) -> Data:
+    def run_task(self):
         return Data('raw data')
 
 
@@ -23,7 +23,7 @@ class PreprocessData(Task):
         self.seed = seed
         self.raw_data = LoadData(name)
 
-    def run_task(self) -> dict[str, Data]:
+    def run_task(self):
         train = Data(f'train data ({self.name}, {self.split_ratio}, {self.seed})')
         valid = Data(f'valid data ({self.name}, {self.split_ratio}, {self.seed})')
         test  = Data(f'test data ({self.name}, {self.split_ratio}, {self.seed})')
@@ -40,7 +40,7 @@ class TrainModel(Task):
         self.train_config = train_config
         self.seed = seed
     
-    def run_task(self) -> Model:
+    def run_task(self):
         model = Model(f"trained model ({self.train_config}, {self.seed})")
         return model
 
@@ -53,7 +53,7 @@ class TestModel(Task):
         self.test_data = test
         self.model = trained_model
     
-    def run_task(self) -> dict[str, float]:
+    def run_task(self):
         return {'score': 42}
 
 
@@ -85,3 +85,4 @@ class Main(Task):
 
 if __name__ == '__main__':
     Main.cli()
+

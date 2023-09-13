@@ -15,8 +15,8 @@ R = TypeVar('R', covariant=True)
 
 @runtime_checkable
 class Future(Protocol[R]):
-    # def run_task(self) -> Rj
-    #     ...
+    def run_task(self) -> R:
+        ...
 
     def get_task_result(self) -> R:
         ...
@@ -39,6 +39,9 @@ class FutureMapperMixin:
 class MappedFuture(FutureMapperMixin, Generic[R]):
     task: Future[Mapping[Any, R] | Sequence[R]]
     key: Any
+
+    def run_task(self) -> R:
+        raise TypeError('Should not be called MappedFuture.run_task')
 
     def get_origin(self) -> Future[Any]:
         x = self.task
@@ -70,6 +73,9 @@ class MappedFuture(FutureMapperMixin, Generic[R]):
 @dataclass(frozen=True)
 class Const(FutureMapperMixin, Generic[R]):
     value: R
+
+    def run_task(self) -> R:
+        return self.value
 
     def get_task_result(self) -> R:
         return self.value
