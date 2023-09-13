@@ -7,7 +7,7 @@ import json
 from .types import JsonDict
 
 
-K = TypeVar('K')
+K = TypeVar('K', int, float, str, bool, None)
 T = TypeVar('T')
 R = TypeVar('R', covariant=True)
 
@@ -32,6 +32,7 @@ class FutureMapperMixin:
     @overload
     def __getitem__(self: Future[Mapping[K, T]], key: K) -> MappedFuture[T]: ...
     def __getitem__(self: Future[Mapping[K, T] | Sequence[T]], key: int | K) -> MappedFuture[T]:
+        assert isinstance(key, (int, float, str, bool, type(None))), f"Non-JSON-able key for Future: {key=}"
         return MappedFuture(self, key)
 
 
@@ -41,7 +42,7 @@ class MappedFuture(FutureMapperMixin, Generic[R]):
     key: Any
 
     def run_task(self) -> R:
-        raise TypeError('Should not be called MappedFuture.run_task')
+        raise TypeError('MappedFuture.run_task should not be called.')
 
     def get_origin(self) -> Future[Any]:
         x = self.task
@@ -74,6 +75,9 @@ class MappedFuture(FutureMapperMixin, Generic[R]):
 class Const(FutureMapperMixin, Generic[R]):
     value: R
 
+    def __post_init__(self):
+        assert _check_if_literal(self.value), f"Non-literal const value: {self.value=}"
+
     def run_task(self) -> R:
         return self.value
 
@@ -81,7 +85,7 @@ class Const(FutureMapperMixin, Generic[R]):
         return self.value
 
     def to_json(self) -> JsonDict:
-        raise TypeError('Const cannot be serialized to json: {self.value=}')
+        return JsonDict({'__const__': True, '__repr__': repr(self.value)})
 
 
 class FutureJSONEncoder(json.JSONEncoder):
@@ -91,3 +95,11 @@ class FutureJSONEncoder(json.JSONEncoder):
         else:
             # Let the base class default method raise the TypeError
             return super().default(o)
+
+
+def _check_if_literal(x):
+    try:
+        xx = eval(repr(x), {}, {})
+    except:
+        return False
+    return x == xx
