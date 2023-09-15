@@ -75,6 +75,25 @@ ans, stats = task.run_graph()  # `ans` should be 6 Choose 3, which is 20.
 # The return values of the intermediate tasks are cached on the specified location and reused on the fly whenever possible.
 ```
 
+### Commandline Interface
+`Task` have a utility classmethod to run with commandline arguments, which is useful if the purpose is to run single task that does everything necessary.
+For example,
+```python
+# taskfile.py
+
+class Main(Task):
+    def __init__(self):
+        self.result = Choose(100, 50)
+    
+    def run_task(self):
+        print(self.result.get_result())
+
+
+if __name__ == '__main__':
+    Main.cli()
+```
+Use `--help` option for more details.
+
 ### Futures and Task Composition
 
 To be more precise, any attributes of a task implementing the `Future` protocol are considered as upstream tasks.
@@ -188,7 +207,23 @@ with Cache('./cache'):
     MyTask().run_graph(executor=ThreadPoolExecutor())
 ```
 
-One can also control the concurrency at a task/channel level:
+One can also control the concurrency at a task level:
+```python
+class TaskUsingGPU(Task):
+    task_channel = 'gpu'
+    ...
+
+class AnotherTask(Task):
+    task_channel = ['gpu', 'memory']
+    ...
+
+with Cache('./cache'):
+    SomeDownstreamTask().run_graph(rate_limits={TaskUsingGPU.task_name: 1})  # Execute one at a time
+```
+
+### Task Channels
+
+Task prefixes and concurrency limits can be also specified via task channels, which is useful for controlling the computation resource of multiple tasks at once.
 ```python
 class TaskUsingGPU(Task):
     task_channel = 'gpu'
@@ -199,29 +234,13 @@ class AnotherTaskUsingGPU(Task):
     ...
 
 with Cache('./cache'):
-    # Queue-level concurrency control
-    SomeDownstreamTask().run_graph(rate_limits={'gpu': 1})  # Execute one at a time
-    SomeDownstreamTask().run_graph(rate_limits={'memory': 1})
-    
-    # Task-level concurrency control
-    SomeDownstreamTask().run_graph(rate_limits={TaskUsingGPU.task_name: 1})
+    # Channel-level concurrency control
+    SomeDownstreamTask().run_graph(
+        rate_limits={'gpu': 1, 'memory': 2},
+        prefixes={'gpu': 'jbsub -wait -queue x86_1h -cores 16+1 -mem 64g'}
+    ) 
 
 ```
-
-### Commandline Interface
-`Task` have a utility classmethod to run with commandline arguments.
-For example,
-```python
-# taskfile.py
-
-class Main(Task):
-    ...
-
-
-if __name__ == '__main__':
-    Main.cli()
-```
-Use `--help` option for more details.
 
 
 ### Built-in properties/methods
