@@ -1,6 +1,7 @@
 from __future__ import annotations
 from collections.abc import Iterable
 from contextlib import ContextDecorator, redirect_stderr, redirect_stdout, ExitStack, AbstractContextManager
+from dataclasses import dataclass
 from typing import Callable, Concatenate, Generic, Literal, Mapping, Sequence, Type, TypeVar, Any, cast
 from typing_extensions import ParamSpec, get_origin, overload
 from datetime import datetime
@@ -410,8 +411,8 @@ class Task(FutureMapperMixin, Generic[R]):
         return self._task_worker.get_result(), stats
 
     @classmethod
-    def cli(cls, args: Sequence[str] | None = None, defaults: argparse.Namespace | None = None) -> None:
-        _run_with_argparse(cls, args=args, defaults=defaults)
+    def cli(cls, args: Sequence[str] | None = None, defaults: dict[str, Any] | None = None) -> None:
+        _run_with_argparse(cls, args=args, defaults=argparse.Namespace(**defaults) if defaults is not None else None)
 
     def get_task_result(self) -> R:
         return self._task_worker.get_result()
@@ -503,8 +504,7 @@ def _run_with_argparse(
     else:
         params = defaults
     parser = argparse.ArgumentParser()
-    parser.add_argument('result_dir', type=Path, help='Path to result directory.')       
-    parser.add_argument('-e', '--entrypoint', default='Main', help='Task name for entrypoint.')                                              
+    parser.add_argument('-o', '--output', required=True, type=Path, help='Path to result directory.')       
     parser.add_argument('-t', '--exec-type', choices=['process', 'thread'], default='process')                                         
     parser.add_argument('-w', '--max-workers', type=int, default=None)                                                                       
     parser.add_argument('-i', '--interactive', action='store_true')                                                                                 
@@ -521,7 +521,7 @@ def _run_with_argparse(
     LOGGER.info('Parsing args from CLI.')
     LOGGER.info(f'Params: {params}')
 
-    with Cache(cache_dir=params.result_dir):
+    with Cache(cache_dir=params.output):
         task_instance = task_class(**(params.kwargs if params.kwargs is not None else {}))
         if not params.dont_force_entrypoint:
             task_instance.clear_task()

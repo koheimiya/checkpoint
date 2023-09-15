@@ -207,6 +207,7 @@ def run_task_graph(
                         future = executor.submit(runner)
                     else:
                         future = Future()
+                        LOGGER.info(f'Interactively executing {key}')
                         future.set_result(runner())
                     in_process[future] = key
 

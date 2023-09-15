@@ -259,7 +259,13 @@ Below is the list of the built-in properties/methods of `Task`. Do not override 
 | `cli`                  | class    | method   | `run_graph` with command line arguments |
 
 ## TODO
-- [ ] Validate task argument with type hint.
-- [ ] Simple task graph visualizer.
-- [ ] Rethink of descriptor design: one cannot re-assign descriptor-ed Future in `__init__`.
-- [ ] Pydantic/dataclass support in task arguments.
+- Better UX
+    - Add option to not cache result.
+    - Add FutureDict and FutureList.
+    - From Requires to Future.
+        - Delegate to Future.
+        - Remove to Requires.
+    - Validate non-Future task argument with type hint.
+- Optional
+    - Simple task graph visualizer.
+    - Pydantic/dataclass support in task arguments (as an incompatible, but better-UX object with TypedDict).
