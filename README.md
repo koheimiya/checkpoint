@@ -4,7 +4,7 @@ A lightweight pipeline building/execution/management tool written in pure Python
 Internally, it depends on `DiskCache`, `cloudpickle` `networkx` and `concurrent.futures`.
 
 ## Why `taskproc`?
-I needed a pipeline-handling library that is thin and flexible as much as possible.
+I need a pipeline-handling library that is thin and flexible as much as possible.
 * `Luigi` is not flexible enough: The definition of the dependencies and the definition of the task computation is tightly coupled at `luigi.Task`s, 
 which is super cumbersome if one tries to edit the pipeline structure without changing the computation of each task.
 * `Airflow` is too big and clumsy: It requires a message broker backend separately installed and run in background. It is also incompatible with non-pip package manager (such as Poetry).
@@ -36,8 +36,7 @@ See [here](examples/ml_taskfile.py) for a typical usage of `taskproc`.
 
 ### Basics
 
-Pipeline is a directed acyclic graph (DAG) of tasks with a single sink node (i.e., final task), where task is a unit of work represented with a class.
-Each task and its upstream dependencies are specified with a class definition like so:
+We define a task by class.
 ```python
 from taskproc import Task, Const, Cache
 
@@ -48,12 +47,12 @@ class Choose(Task):
         # Upstream tasks are prepared here.
         # Al attributes of a task with type `Task` are considered as the upstream tasks.
         if 0 < k < n:
-            self.prev1 = Choose(n - 1, k - 1)
-            self.prev2 = Choose(n - 1, k)
+            self.left = Choose(n - 1, k - 1)
+            self.right = Choose(n - 1, k)
         elif k == 0 or k == n:
             # We can just pass a value without computation in place of a task.
-            self.prev1 = Const(0)
-            self.prev2 = Const(1)
+            self.left = Const(0)
+            self.right = Const(1)
         else:
             raise ValueError(f'{(n, k)}')
 
@@ -62,20 +61,18 @@ class Choose(Task):
         # which is delayed until it is necessary.
 
         # The return values of the prerequisite tasks are accessible via `.get_result()`:
-        return self.prev1.get_result() + self.prev2.get_result()
+        return self.left.get_result() + self.right.get_result()
 
-with Cache('./cache'):
-    # Construct a task with its upstreams.
-    # Instantiation of `Task` should be inside `Cache`.
+# Construct a concrete task with the class instantiation, which should be inside of `Cache`.
+with Cache('./cache'):  # Specifies the cache directory
     task = Choose(6, 3)
 
 # To run the task graph, use the `run_graph()` method.
 ans, stats = task.run_graph()  # `ans` should be 6 Choose 3, which is 20.
 
 # It greedily executes all the necessary tasks in the graph as parallel as possible
-# and then produces the return value of the task on which we call `run_graph()`, as well as the execution stats.
-# The return values of the intermediate tasks are cached at `./cache`
-# and reused on the fly whenever possible.
+# and then produces the return value of the task on which we call `run_graph()`, as well as some execution stats.
+# The return values of the intermediate tasks are cached on the specified location and reused on the fly whenever possible.
 ```
 
 ### Futures and Task Composition
@@ -165,8 +162,8 @@ class TrainModel(Task):
 ```
 
 
-### Job scheduling and prefixes
-Tasks can be run with a prefix command, which is useful when working with a third-party job scheduling command such as `jbsub`.
+### Prefix Command
+Tasks can be run with a prefix command, which is useful when working with a third-party job-scheduling or containerization command such as `jbsub` and `docker`.
 ```python
 
 class TaskWithJobScheduler(Task):
@@ -174,7 +171,7 @@ class TaskWithJobScheduler(Task):
     ...
 ```
 
-### Execution policy configuration
+### Execution Policy Configuration
 
 One can control the task execution with `concurrent.futures.Executor` class:
 ```python
@@ -211,7 +208,7 @@ with Cache('./cache'):
 
 ```
 
-### Commandline tool
+### Commandline Interface
 `Task` have a utility classmethod to run with commandline arguments.
 For example,
 ```python
@@ -250,6 +247,7 @@ Below is the list of the built-in properties/methods of `Task`. Do not override 
 - Simplify
     - Drop the support of ThreadPoolExecutor.
 - Better UX
+    - Add the signature of task to the description to `--kwargs` of CLI.
     - Add option to not cache result (need to address timestamp peeking and value passing).
     - Validate non-Future task argument with type hint.
 - Optional
