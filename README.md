@@ -76,7 +76,7 @@ ans, stats = task.run_graph()  # `ans` should be 6 Choose 3, which is 20.
 ```
 
 ### Commandline Interface
-`Task` have a utility classmethod to run with commandline arguments, which is useful if the purpose is to run single task that does everything necessary.
+`Task` has a utility classmethod to run with commandline arguments, which is useful if all you need is to run a single task that does everything necessary.
 For example,
 ```python
 # taskfile.py
