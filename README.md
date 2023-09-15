@@ -34,7 +34,7 @@ See [here](examples/ml_taskfile.py) for a typical usage of `taskproc`.
 
 ## Documentation
 
-### Defining task
+### Basics
 
 Pipeline is a directed acyclic graph (DAG) of tasks with a single sink node (i.e., final task), where task is a unit of work represented with a class.
 Each task and its upstream dependencies are specified with a class definition like so:
@@ -45,15 +45,13 @@ class Choose(Task):
     """ Compute the binomial coefficient. """
 
     def __init__(self, n: int, k: int):
-        # The upstream tasks and the other instance attributes are prepared here.
-        # It thus recursively defines all the tasks we need to run this task,
-        # i.e., the entire upstream pipeline.
-
+        # Upstream tasks are prepared here.
+        # Al attributes of a task with type `Task` are considered as the upstream tasks.
         if 0 < k < n:
             self.prev1 = Choose(n - 1, k - 1)
             self.prev2 = Choose(n - 1, k)
         elif k == 0 or k == n:
-            # We can just pass a value to a requirement slot directly without running tasks.
+            # We can just pass a value without computation in place of a task.
             self.prev1 = Const(0)
             self.prev2 = Const(1)
         else:
@@ -80,7 +78,64 @@ ans, stats = task.run_graph()  # `ans` should be 6 Choose 3, which is 20.
 # and reused on the fly whenever possible.
 ```
 
-### Deleting cache
+### Futures and Task Composition
+
+To be more precise, any attributes of a task implementing the `Future` protocol are considered as upstream tasks.
+Tasks and constants are futures.
+One can pass a future into the initialization of another task to compose the computation.
+```python
+class MyTask(Task):
+    def __init__(self, upstream: Future[int], other_args: Any):
+        ...
+
+with Cache('./cache'):
+    MyTask(
+        upstream=UpstreamTaskProducingInt(),
+        ...
+    }).run_graph()
+```
+In general, tasks can be initialized with any JSON serializable objects which may or may not contain futures.
+
+`FutureList` and `FutureDict` are for aggregating multiple `Future`s into one, allowing us to register multiple upstream tasks at once.
+```python
+from taskproc import FutureList, FutureDict
+
+class SummarizeScores(Task):
+
+    def __init__(self, task_dict: dict[str, Future[float]]):
+        self.score_list = FutureList([ScoringTask(i) for i in range(10)])
+        self.score_dict = FutureDict(task_dict)
+
+    def run_task(self) -> float:
+        # `.get_result()` evaluates `FutureList[float]` and `FutureDict[str, float]` into
+        # `list[float]` and `dict[str, float]`, respectively.
+        return sum(self.score_dict.get_result().values()) / len(self.score_dict.get_result())
+```
+
+If the output is a sequence or a mapping, one can directly access its element by indexing.
+The result is also a `Future`.
+```python
+class MultiOutputTask(Task):
+    def run_task(self) -> dict[str, int]:
+        return {'foo': 42, ...}
+
+class DownstreamTask(Task):
+    def __init__(self):
+        self.dep = MultiOutputTask()['foo']
+```
+
+### Output Specification
+
+The output of the `.run_task()` should be serializable with `cloudpickle`,
+which is then compressed with `gzip`.
+The compression level can be changed as follows (defaults to 9).
+```python
+class NoCompressionTask(Task):
+    task_compress_level = 0
+    ...
+```
+
+### Deleting Cache
 
 It is possible to selectively discard cache: 
 ```python
@@ -96,68 +151,10 @@ with Cache('./cache'):
     Choose.clear_all_tasks()            
 ```
 
-### Task Composition
-
-The arguments of the `__init__` method can be anything JSON serializable + `Future`s,
-where `Future` is either `Task` or `Const`.
-```python
-class MyTask(Task):
-    def __init__(self, param1, param2):
-        ...
-
-with Cache('./cache'):
-    MyTask(
-        param1={
-            'upstream_task0': UpstreamTask(),
-            'other_params': [1, 2],
-            ...
-        },
-        param2={ ... }
-    }).run_graph()
-```
-
-List/dict of upstream tasks can be registered with `FutureList` and `FutureDict`:
-```python
-from taskproc import FutureList, FutureDict
-
-class SummarizeScores(Task):
-
-    def __init__(self, task_dict: dict[str, Future[float]]):
-        self.score_list = FutureList([MyScore(i) for i in range(10)])
-        self.score_dict = FutureDict(task_dict)
-
-    def run_task(self) -> float:
-        # `.get_result()` evaluates `FutureList[float]` and `FutureDict[str, float]` into
-        # `list[float]` and `dict[str, float]`, respectively.
-        return sum(self.score_dict.get_result().values()) / len(self.score_dict.get_result())
-```
-
-The output of the `run_task` method should be serializable with `cloudpickle`,
-which is then compressed with `gzip`.
-The compression level can be changed as follows (defaults to 9).
-```python
-class NoCompressionTask(Task):
-    task_compress_level = 0
-    ...
-```
-
-If the output is a list or a dictionary, one can directly access its element by indexing.
-The result is also a `Future`.
-```python
-class MultiOutputTask(Task):
-    def run_task(self) -> dict[str, int]:
-        return {'foo': 42, ...}
-
-class DownstreamTask(Task):
-    def __init__(self):
-        self.dep = MultiOutputTask()['foo']
-```
-
-### Data directories
+### Data Directories
 
 Use `task.task_directory` to get a fresh path dedicated to each task.
-The directory is automatically created and managed along with the task cache:
-The contents of the directory are cleared at each task call and persist until the task is cleared.
+The directory is automatically created and managed along with the cache:
 ```python
 class TrainModel(Task):
     def run_task(self) -> str:
@@ -169,11 +166,11 @@ class TrainModel(Task):
 
 
 ### Job scheduling and prefixes
-Tasks can be run with job schedulers using `task_prefix_command`, which will be inserted just before each task call.
+Tasks can be run with a prefix command, which is useful when working with a third-party job scheduling command such as `jbsub`.
 ```python
 
 class TaskWithJobScheduler(Task):
-    task_prefix_command = 'jbsub -interactive -tty -queue x86_1h -cores 16+1 -mem 64g'
+    task_prefix_command = 'jbsub -wait -queue x86_1h -cores 16+1 -mem 64g'
     ...
 ```
 
@@ -206,7 +203,7 @@ class AnotherTaskUsingGPU(Task):
 
 with Cache('./cache'):
     # Queue-level concurrency control
-    SomeDownstreamTask().run_graph(rate_limits={'gpu': 1})
+    SomeDownstreamTask().run_graph(rate_limits={'gpu': 1})  # Execute one at a time
     SomeDownstreamTask().run_graph(rate_limits={'memory': 1})
     
     # Task-level concurrency control
@@ -250,6 +247,8 @@ Below is the list of the built-in properties/methods of `Task`. Do not override 
 | `cli`                  | class    | method   | `run_graph` with command line arguments |
 
 ## TODO
+- Simplify
+    - Drop the support of ThreadPoolExecutor.
 - Better UX
     - Add option to not cache result (need to address timestamp peeking and value passing).
     - Validate non-Future task argument with type hint.

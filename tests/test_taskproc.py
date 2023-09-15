@@ -8,7 +8,6 @@ from taskproc.graph import FailedTaskError
 
 
 class Choose(Task):
-
     def __init__(self, n: int, k: int):
         if 0 < k < n:
             self.prev1 = Choose(n - 1, k - 1)
@@ -121,7 +120,6 @@ class CreateFile(Task):
 
 
 class GreetWithFile(Task):
-
     def __init__(self, name: str):
         self.filepath = CreateFile(f'Hello, {name}!')
 
@@ -173,7 +171,6 @@ class CountElem(Task):
 
 
 class SummarizeParam(Task):
-
     def __init__(self, **params: Any):
         self.a_params = params
         self.a_container_keys = [k for k in params if isinstance(params[k], (list, dict))]

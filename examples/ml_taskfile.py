@@ -1,4 +1,4 @@
-from typing import NewType
+from typing import NewType, reveal_type
 from taskproc import Task, Future
 from taskproc.future import FutureList
 
@@ -75,4 +75,3 @@ class Main(Task):
 
 if __name__ == '__main__':
     Main.cli()
-

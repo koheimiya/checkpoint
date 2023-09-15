@@ -32,8 +32,6 @@ class Future(Protocol[R]):
         ...
 
 
-
-
 class FutureMapperMixin:
 
     @overload
@@ -116,7 +114,6 @@ def _check_if_literal(x):
 
 
 class FutureDict(UserDict[K, Future[R]]):
-
     def get_result(self) -> dict[K, R]:
         return {k: v.get_result() for k, v in self.items()}
 
@@ -128,7 +125,6 @@ class FutureDict(UserDict[K, Future[R]]):
 
 
 class FutureList(UserList[Future[R]]):
-
     def get_result(self) -> list[R]:
         return [v.get_result() for v in self]
 
