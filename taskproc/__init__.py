@@ -8,14 +8,14 @@ Key features:
 Limitations:
     - No priority-based scheduling.
 """
-from .future import Future
-from .task import Task, Req, Requires, RequiresList, RequiresDict, Const, Cache
+from .future import Future, Const, FutureList, FutureDict
+from .task import Task, Cache
 from .graph import FailedTaskError
 
 
 __EXPORT__ = [
-        Future, Const, Task,
-        Req, Requires, RequiresList, RequiresDict,
+        Future, Const, FutureList, FutureDict,
+        Task,
         Cache,
         FailedTaskError
         ]

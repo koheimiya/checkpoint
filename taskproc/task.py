@@ -1,9 +1,8 @@
 from __future__ import annotations
 from collections.abc import Iterable
 from contextlib import ContextDecorator, redirect_stderr, redirect_stdout, ExitStack, AbstractContextManager
-from dataclasses import dataclass
-from typing import Callable, Concatenate, Generic, Literal, Mapping, Sequence, Type, TypeVar, Any, cast
-from typing_extensions import ParamSpec, get_origin, overload
+from typing import Callable, Concatenate, Generic, Literal, Sequence, Type, TypeVar, Any, cast
+from typing_extensions import ParamSpec
 from datetime import datetime
 from pathlib import Path
 from concurrent.futures import Executor, ProcessPoolExecutor, ThreadPoolExecutor
@@ -23,7 +22,7 @@ import sys
 from .types import JsonStr, TaskKey, JsonDict
 from .future import Future, MappedFuture, Const, FutureJSONEncoder, FutureMapperMixin
 from .database import Database
-from .graph import TaskGraph, run_task_graph
+from .graph import TaskGraph, TaskHandlerProtocol, run_task_graph
 
 
 LOGGER = logging.getLogger(__name__)
@@ -94,7 +93,6 @@ class TaskWorker(Generic[R]):
         self.instance = instance
         self.arg_key = arg_key
 
-        self.check_requirements_set()
         self.dirobj = config.db.get_instance_dir(
                 key=arg_key,
                 deps={k: w.dirobj.path for k, w in self.get_prerequisites().items()},
@@ -120,29 +118,14 @@ class TaskWorker(Generic[R]):
     def to_tuple(self) -> TaskKey:
         return (self.config.name, self.arg_key)
 
-    def check_requirements_set(self) -> None:
-        cls = self.config.task_class
-        inst = self.instance
-        unset = []
-        for name, v in inspect.getmembers(cls):
-            if isinstance(v, Req):
-                if not v.is_set_on(inst):
-                    unset.append(name)
-        if unset:
-            raise ValueError(f'Some requirements are not set on the task {cls.__name__}: {unset}')
-
     def get_prerequisites(self) -> dict[str, TaskWorker[Any]]:
-        cls = self.config.task_class
         inst = self.instance
-        prerequisites: dict[str, TaskWorker[Any]] = {}
-        for name, v in inspect.getmembers(cls):
-            if isinstance(v, Req):
-                for k, task in v.get_task_dict(inst).items():
-                    if k is None:
-                        prerequisites[f'{name}'] = task._task_worker
-                    else:
-                        prerequisites[f'{name}.{k}'] = task._task_worker
-        assert all(isinstance(p, TaskWorker) for p in prerequisites.values())
+        prerequisites: dict[str, TaskWorker] = {}
+        for name, f in inst.__dict__.items():
+            if isinstance(f, Future):
+                for k, worker in f.get_workers().items():
+                    assert isinstance(worker, TaskWorker)
+                    prerequisites[f'{name}.{k}'] = worker
         return prerequisites
 
     def peek_timestamp(self) -> datetime | None:
@@ -321,14 +304,6 @@ class Task(FutureMapperMixin, Generic[R]):
         ...
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
-        # Fill missing requirement
-        ann = inspect.get_annotations(cls, eval_str=True)
-        for k, v in ann.items():
-            if get_origin(v) is Req and getattr(cls, k, None) is None:
-                req = Req()
-                req.__set_name__(None, k)
-                setattr(cls, k, req)
-
         # Wrap initializer to make __init__ lazy
         cls.__init__ = wrap_task_init(cls.__init__)  # type: ignore
         super().__init_subclass__(**kwargs)
@@ -414,12 +389,15 @@ class Task(FutureMapperMixin, Generic[R]):
     def cli(cls, args: Sequence[str] | None = None, defaults: dict[str, Any] | None = None) -> None:
         _run_with_argparse(cls, args=args, defaults=argparse.Namespace(**defaults) if defaults is not None else None)
 
-    def get_task_result(self) -> R:
+    def get_result(self) -> R:
         return self._task_worker.get_result()
 
     def to_json(self) -> JsonDict:
         name, keys = self._task_worker.to_tuple()
         return JsonDict({'__task__': name, '__args__': json.loads(keys)})
+
+    def get_workers(self) -> dict[str, TaskHandlerProtocol]:
+        return {'self': self._task_worker}
 
 
 def _serialize_function(fn: Callable[..., Any]) -> str:
@@ -435,63 +413,6 @@ def _normalize_arguments(fn: Callable[P, Any], *args: P.args, **kwargs: P.kwargs
 def _serialize_arguments(fn: Callable[P, Any], *args: P.args, **kwargs: P.kwargs) -> JsonStr:
     arguments = _normalize_arguments(fn, *args, **kwargs)
     return cast(JsonStr, json.dumps(arguments, separators=(',', ':'), sort_keys=True, cls=FutureJSONEncoder))
-
-
-class Req(Generic[T, R]):
-    def is_set_on(self, obj: Task[Any]) -> bool:
-        return hasattr(obj, self.private_name)
-
-    def __set_name__(self, _: Any, name: str) -> None:
-        self.public_name = name
-        self.private_name = '_requires__' + name
-
-    def __set__(self, obj: Task[Any], value: T) -> None:
-        setattr(obj, self.private_name, value)
-
-    @overload
-    def __get__(self: Requires[U], obj: Task[Any], _=None) -> U: ...
-    @overload
-    def __get__(self: RequiresList[U], obj: Task[Any], _=None) -> list[U]: ...
-    @overload
-    def __get__(self: RequiresDict[K, U], obj: Task[Any], _=None) -> dict[K, U]: ...
-    def __get__(self, obj: Task[Any], _=None) -> Any:
-
-        def get_result(task_like: Future[S]) -> S:
-            if isinstance(task_like, (Task, MappedFuture, Const)):
-                return task_like.get_task_result()
-            else:
-                raise TypeError(f'Unsupported requirement type: {type(task_like)}')
-
-        x = getattr(obj, self.private_name)
-        if isinstance(x, list):
-            return [get_result(t) for t in x]
-        elif isinstance(x, dict):
-            return {k: get_result(v) for k, v in x.items()}
-        else:
-            return get_result(x)
-
-    def get_task_dict(self, obj: Task[Any]) -> dict[str | None, Task[Any]]:
-        x = getattr(obj, self.private_name, None)
-        assert x is not None, f'Requirement `{self.public_name}` is not set in {obj}.'
-
-        if isinstance(x, MappedFuture):
-            x = x.get_origin()
-
-        if isinstance(x, Task):
-            return {None: x}
-        elif isinstance(x, list):
-            return {str(i): xi for i, xi in enumerate(x)}
-        elif isinstance(x, dict):
-            return {str(k): v for k, v in x.items()}
-        elif isinstance(x, Const):
-            return {}
-        else:
-            raise TypeError(f'Unsupported requirement type: {type(x)}')
-
-
-Requires = Req[Future[R], R]
-RequiresList = Req[Sequence[Future[R]], list[R]]
-RequiresDict = Req[Mapping[K, Future[R]], dict[K, R]]
 
 
 def _run_with_argparse(

@@ -1,16 +1,13 @@
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 import pytest
-from taskproc import Task, Future, Requires, Const, RequiresDict, Cache
+from taskproc import Task, Future, Const, Cache
 import time
+from taskproc.future import FutureDict, FutureList
 from taskproc.graph import FailedTaskError
-
-from taskproc.task import RequiresList
 
 
 class Choose(Task):
-    prev1: Requires[int]
-    prev2: Requires[int]
 
     def __init__(self, n: int, k: int):
         if 0 < k < n:
@@ -21,7 +18,7 @@ class Choose(Task):
             self.prev2 = Const(1)
 
     def run_task(self) -> int:
-        return self.prev1 + self.prev2
+        return self.prev1.get_result() + self.prev2.get_result()
 
 
 @Cache('./.cache/tests')
@@ -80,15 +77,13 @@ class TaskB(Task):
 
 class TaskC(Task):
     task_compress_level = 0
-    a: Requires[str]
-    b: Requires[str]
 
     def __init__(self):
         self.a = TaskA()
         self.b = TaskB()
     
     def run_task(self) -> str:
-        return f'{self.a}, {self.b}'
+        return f'{self.a.get_result()}, {self.b.get_result()}'
 
 
 @Cache('./.cache/tests')
@@ -126,13 +121,12 @@ class CreateFile(Task):
 
 
 class GreetWithFile(Task):
-    filepath: Requires[str]
 
     def __init__(self, name: str):
         self.filepath = CreateFile(f'Hello, {name}!')
 
     def run_task(self) -> str:
-        with open(self.filepath, 'r') as f:
+        with open(self.filepath.get_result(), 'r') as f:
             return f.read()
 
 
@@ -179,15 +173,14 @@ class CountElem(Task):
 
 
 class SummarizeParam(Task):
-    d_counts: RequiresDict[str, int]
 
     def __init__(self, **params: Any):
         self.a_params = params
         self.a_container_keys = [k for k in params if isinstance(params[k], (list, dict))]
-        self.d_counts = {k: CountElem(params[k]) for k in self.a_container_keys}
+        self.d_counts = FutureDict({k: CountElem(params[k]) for k in self.a_container_keys})
 
     def run_task(self) -> dict[str, int | None]:
-        out: dict[str, int | None] = dict(self.d_counts)
+        out: dict[str, int | None] = dict(self.d_counts.get_result())
         out.update({k: None for k in self.a_params if k not in self.a_container_keys})
         return out
 
@@ -207,13 +200,11 @@ class MultiResultTask(Task):
 
 
 class DownstreamTask(Task):
-    up: Requires[str]
-
     def __init__(self) -> None:
         self.up = MultiResultTask()['hello'][1]
 
     def run_task(self) -> str:
-        return self.up
+        return self.up.get_result()
 
 
 @Cache('./.cache/tests')
@@ -256,14 +247,13 @@ def test_prefix_command2(capsys):
 
 
 class SleepTask(Task):
-    prevs: RequiresList[float]
     def __init__(self, *prevs: Future[float]):
-        self.prevs = list(prevs)
+        self.prevs = FutureList(prevs)
 
     def run_task(self):
         t = .5
         time.sleep(t)
-        return t + max(self.prevs, default=0)
+        return t + max(self.prevs.get_result(), default=0)
 
 
 @Cache('./.cache/tests')

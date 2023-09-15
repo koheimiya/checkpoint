@@ -39,15 +39,10 @@ See [here](examples/ml_taskfile.py) for a typical usage of `taskproc`.
 Pipeline is a directed acyclic graph (DAG) of tasks with a single sink node (i.e., final task), where task is a unit of work represented with a class.
 Each task and its upstream dependencies are specified with a class definition like so:
 ```python
-from taskproc import Task, Requires, Const, Cache
+from taskproc import Task, Const, Cache
 
 class Choose(Task):
     """ Compute the binomial coefficient. """
-    # Inside a task, we first declare the values that must be computed in upstream.
-    # In this example, `Choose(n, k)` depends on `Choose(n - 1, k - 1)` and `Choose(n - 1, k)`,
-    # so it requires two `int` values.
-    prev1: Requires[int]
-    prev2: Requires[int]
 
     def __init__(self, n: int, k: int):
         # The upstream tasks and the other instance attributes are prepared here.
@@ -68,8 +63,8 @@ class Choose(Task):
         # Here we define the main computation of the task,
         # which is delayed until it is necessary.
 
-        # The return values of the prerequisite tasks are accessible via the descriptors:
-        return self.prev1 + self.prev2
+        # The return values of the prerequisite tasks are accessible via `.get_result()`:
+        return self.prev1.get_result() + self.prev2.get_result()
 
 with Cache('./cache'):
     # Construct a task with its upstreams.
@@ -121,22 +116,20 @@ with Cache('./cache'):
     }).run_graph()
 ```
 
-List/dict of upstream tasks can be registered with `RequiresList` and `RequiresDict`:
+List/dict of upstream tasks can be registered with `FutureList` and `FutureDict`:
 ```python
-from taskproc import RequiresList, RequiresDict
+from taskproc import FutureList, FutureDict
 
 class SummarizeScores(Task):
-    score_list: RequiresList[float]
-    score_dict: RequiresDict[str, float]
 
     def __init__(self, task_dict: dict[str, Future[float]]):
-        self.score_list = [MyScore(i) for i in range(10)]
-        self.score_dict = task_dict
+        self.score_list = FutureList([MyScore(i) for i in range(10)])
+        self.score_dict = FutureDict(task_dict)
 
     def run_task(self) -> float:
-        # At runtime `self.score_list` and `self.score_dict` are evaluated as
+        # `.get_result()` evaluates `FutureList[float]` and `FutureDict[str, float]` into
         # `list[float]` and `dict[str, float]`, respectively.
-        return sum(self.score_dict.values()) / len(self.score_dict)
+        return sum(self.score_dict.get_result().values()) / len(self.score_dict.get_result())
 ```
 
 The output of the `run_task` method should be serializable with `cloudpickle`,
@@ -156,8 +149,6 @@ class MultiOutputTask(Task):
         return {'foo': 42, ...}
 
 class DownstreamTask(Task):
-    dep: Requires[int]
-
     def __init__(self):
         self.dep = MultiOutputTask()['foo']
 ```
@@ -260,11 +251,7 @@ Below is the list of the built-in properties/methods of `Task`. Do not override 
 
 ## TODO
 - Better UX
-    - Add option to not cache result.
-    - Add FutureDict and FutureList.
-    - From Requires to Future.
-        - Delegate to Future.
-        - Remove to Requires.
+    - Add option to not cache result (need to address timestamp peeking and value passing).
     - Validate non-Future task argument with type hint.
 - Optional
     - Simple task graph visualizer.

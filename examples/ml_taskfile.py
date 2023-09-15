@@ -1,5 +1,6 @@
 from typing import NewType
-from taskproc import Task, Future, Requires, RequiresList
+from taskproc import Task, Future
+from taskproc.future import FutureList
 
 
 Data = NewType('Data', str)
@@ -15,8 +16,6 @@ class LoadData(Task):
 
 
 class PreprocessData(Task):
-    raw_data: Requires[Data]
-
     def __init__(self, name: str, split_ratio: float, seed: int):
         self.name = name
         self.split_ratio = split_ratio
@@ -31,9 +30,6 @@ class PreprocessData(Task):
 
 
 class TrainModel(Task):
-    train_data: Requires[Data]
-    valid_data: Requires[Data]
-    
     def __init__(self, train: Future[Data], valid: Future[Data], train_config: dict, seed: int):
         self.train_data = train
         self.valid_data = valid
@@ -46,9 +42,6 @@ class TrainModel(Task):
 
 
 class TestModel(Task):
-    test_data: Requires[Data]
-    model: Requires[Model]
-
     def __init__(self, test: Future[Data], trained_model: Future[Model]):
         self.test_data = test
         self.model = trained_model
@@ -58,10 +51,8 @@ class TestModel(Task):
 
 
 class Main(Task):
-    results: RequiresList[dict[str, float]]
-
     def __init__(self):
-        tasks: list[Future[dict]] = []
+        self.results = FutureList[dict[str, int]]()
         for i in range(10):
             dataset = PreprocessData('mydata', split_ratio=.8, seed=i)
             trained = TrainModel(
@@ -74,12 +65,11 @@ class Main(Task):
                     test=dataset['test'],
                     trained_model=trained,
                     )
-            tasks.append(result)
-        self.results = tasks
+            self.results.append(result)
 
     def run_task(self) -> None:
         print('Running main')
-        scores = [res['score'] for res in self.results]
+        scores = [res['score'] for res in self.results.get_result()]
         print(scores)
 
 
