@@ -243,7 +243,7 @@ Below is the list of the built-in properties/methods of `Task`. Do not override 
 | `task_stderr`          | instance | property | Path to the task's stderr |
 | `run_task`             | instance | method   | Run the task |
 | `run_graph`            | instance | method   | Run the task after necessary upstream tasks and save the results in the cache |
-| `get_task_result`      | instance | method   | Directly get the result of the task (fails if the cache is missing) |
+| `get_result`           | instance | method   | Get the result of the task (fails if the result is missing) |
 | `to_json`              | instance | method   | Serialize itself as a JSON dictionary |
 | `clear_task`           | instance | method   | Clear the cache of the task instance |
 | `clear_all_tasks`      | class    | method   | Clear the cache of the task class |
