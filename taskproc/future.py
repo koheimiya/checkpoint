@@ -15,12 +15,13 @@ R = TypeVar('R', covariant=True)
 P = TypeVar('P', contravariant=True)
 
 
-
-@runtime_checkable
-class Future(Protocol[R]):
+class _PseudoFuture(Protocol[R]):
     def run_task(self) -> R:
         ...
 
+
+@runtime_checkable
+class Future(Protocol[R]):
     def get_result(self) -> R:
         ...
 
@@ -48,9 +49,6 @@ class FutureMapperMixin:
 class MappedFuture(FutureMapperMixin, Generic[R]):
     task: Future[Mapping[Any, R] | Sequence[R]]
     key: Any
-
-    def run_task(self) -> R:
-        raise TypeError('Should not be called.')
 
     def get_origin(self) -> Future[Any]:
         x = self.task
@@ -90,9 +88,6 @@ class Const(FutureMapperMixin, Generic[R]):
     def __post_init__(self):
         assert _check_if_literal(self.value), f"Non-literal const value: {self.value=}"
 
-    def run_task(self) -> R:
-        return self.value
-
     def get_result(self) -> R:
         return self.value
 
@@ -122,9 +117,6 @@ def _check_if_literal(x):
 
 class FutureDict(UserDict[K, Future[R]]):
 
-    def run_task(self) -> dict[K, R]:
-        raise TypeError('Should not be called.')
-
     def get_result(self) -> dict[K, R]:
         return {k: v.get_result() for k, v in self.items()}
 
@@ -136,9 +128,6 @@ class FutureDict(UserDict[K, Future[R]]):
 
 
 class FutureList(UserList[Future[R]]):
-
-    def run_task(self) -> list[R]:
-        raise TypeError('Should not be called.')
 
     def get_result(self) -> list[R]:
         return [v.get_result() for v in self]

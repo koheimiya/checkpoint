@@ -20,7 +20,7 @@ import sys
 
 
 from .types import JsonStr, TaskKey, JsonDict
-from .future import Future, MappedFuture, Const, FutureJSONEncoder, FutureMapperMixin
+from .future import Future, FutureJSONEncoder, FutureMapperMixin, _PseudoFuture
 from .database import Database
 from .graph import TaskGraph, TaskHandlerProtocol, run_task_graph
 
@@ -389,8 +389,8 @@ class Task(FutureMapperMixin, Generic[R]):
     def cli(cls, args: Sequence[str] | None = None, defaults: dict[str, Any] | None = None) -> None:
         _run_with_argparse(cls, args=args, defaults=argparse.Namespace(**defaults) if defaults is not None else None)
 
-    def get_result(self) -> R:
-        return self._task_worker.get_result()
+    def get_result(self: _PseudoFuture[T]) -> T:
+        return cast(Task, self)._task_worker.get_result()
 
     def to_json(self) -> JsonDict:
         name, keys = self._task_worker.to_tuple()
