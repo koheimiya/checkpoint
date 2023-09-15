@@ -110,7 +110,6 @@ with Cache('./cache'):
         ...
     }).run_graph()
 ```
-In general, tasks can be initialized with any JSON serializable objects which may or may not contain futures.
 
 `FutureList` and `FutureDict` are for aggregating multiple `Future`s into one, allowing us to register multiple upstream tasks at once.
 ```python
@@ -140,10 +139,15 @@ class DownstreamTask(Task):
         self.dep = MultiOutputTask()['foo']
 ```
 
-### Output Specification
+### Input-output Specification
 
-The output of the `.run_task()` should be serializable with `cloudpickle`,
-which is then compressed with `gzip`.
+In general, tasks can be initialized with any JSON serializable objects which may or may not contain futures.
+Any non-jsonable objects can be also passed, as the output of a task.
+```python
+SomeTask(1, 'foo', bar={'baz': TaskProducingNonJsonableObj(), 'other': [1, 2, 3]})
+```
+On the other hand, the output of a task, i.e., the return value of the `.run_task()` method, should be serializable with `cloudpickle`.
+The picked object is then compressed with `gzip`.
 The compression level can be changed as follows (defaults to 9).
 ```python
 class NoCompressionTask(Task):
