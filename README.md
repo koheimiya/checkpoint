@@ -93,6 +93,7 @@ class Main(Task):
 if __name__ == '__main__':
     Main.cli()
 ```
+All the features of `taskproc` is accessible form CLI.
 Use `--help` option for more details.
 
 
@@ -176,7 +177,7 @@ One can also delete caches directly from the disk location, i.e., `./cache` in t
 ### Data Directories
 
 Use `task.task_directory` to get a fresh path dedicated to each task.
-The directory is automatically created and managed along with the cache:
+The directory is automatically created and managed along with the cache.
 ```python
 class TrainModel(Task):
     def run_task(self) -> str:
@@ -228,7 +229,7 @@ class AnotherTaskUsingGPU(Task):
     ...
 
 with Cache('./cache'):
-    # Channel-level concurrency control
+    # Channel-level prefix/concurrency control
     SomeDownstreamTask().run_graph(
         rate_limits={'gpu': 1, 'memory': 2},
         prefixes={'gpu': 'jbsub -wait -queue x86_1h -cores 16+1 -mem 64g'}
@@ -236,8 +237,8 @@ with Cache('./cache'):
 ```
 
 #### Cache Compression
-The picked object is then compressed with `gzip`.
-The compression level can be changed as follows (defaults to 9).
+The task output is compressed with `gzip`.
+The compression level can be changed as follows (defaults to 9), trading the space efficiency with the time efficiency.
 ```python
 class NoCompressionTask(Task):
     task_compress_level = 0
@@ -273,6 +274,7 @@ Below is the list of the built-in properties/methods of `Task`. Do not override 
     - Add option to not cache result (need to address timestamp peeking and value passing).
 - Simplify
     - Drop the support of ThreadPoolExecutor.
-- Optional
+- Enhancement
     - Simple task graph visualizer.
     - Pydantic/dataclass support in task arguments (as an incompatible, but better-UX object with TypedDict).
+    - Dynamic prefix generation with prefix template (e.g., for specifying the log locations).
