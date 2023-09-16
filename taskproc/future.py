@@ -15,11 +15,6 @@ R = TypeVar('R', covariant=True)
 P = TypeVar('P', contravariant=True)
 
 
-class _PseudoFuture(Protocol[R]):
-    def run_task(self) -> R:
-        ...
-
-
 @runtime_checkable
 class Future(Protocol[R]):
     def get_result(self) -> R:
@@ -32,14 +27,21 @@ class Future(Protocol[R]):
         ...
 
 
-class FutureMapperMixin:
+class FutureJSONEncoder(json.JSONEncoder):
+    def default(self, o):
+        if isinstance(o, Future):
+            return o.to_json()
+        else:
+            return super().default(o)
 
+
+class FutureMapperMixin:
     @overload
     def __getitem__(self: Future[Sequence[T]], key: int) -> MappedFuture[T]: ...
     @overload
     def __getitem__(self: Future[Mapping[K, T]], key: K) -> MappedFuture[T]: ...
     def __getitem__(self: Future[Mapping[K, T] | Sequence[T]], key: int | K) -> MappedFuture[T]:
-        assert isinstance(key, (int, float, str, bool, type(None))), f"Non-JSON-able key for Future: {key=}"
+        assert _check_if_literal(key), f"Non-literal key for Future: {key=}"
         return MappedFuture(self, key)
 
 
@@ -70,9 +72,11 @@ class MappedFuture(FutureMapperMixin, Generic[R]):
         return out
 
     def to_json(self) -> JsonDict:
-        out = self.get_origin().to_json()
-        out['__future__'] = 'MappedFuture'
-        out['__key__'] = self.get_args()
+        out = JsonDict({
+            '__future__': 'MappedFuture',
+            '__orig__': self.get_origin().to_json(),
+            '__args__': repr(self.get_args()),
+            })
         return out
 
     def get_workers(self) -> dict[str, TaskHandlerProtocol]:
@@ -90,22 +94,13 @@ class Const(FutureMapperMixin, Generic[R]):
         return self.value
 
     def to_json(self) -> JsonDict:
-        return JsonDict({'__future__': 'Const', '__repr__': repr(self.value)})
+        return JsonDict({'__future__': 'Const', '__value__': repr(self.value)})
 
     def get_workers(self) -> dict[str, TaskHandlerProtocol]:
         return {}
 
 
-class FutureJSONEncoder(json.JSONEncoder):
-    def default(self, o):
-        if isinstance(o, Future):
-            return o.to_json()
-        else:
-            # Let the base class default method raise the TypeError
-            return super().default(o)
-
-
-def _check_if_literal(x):
+def _check_if_literal(x: Any) -> bool:
     try:
         xx = eval(repr(x), {}, {})
     except:
@@ -113,8 +108,8 @@ def _check_if_literal(x):
     return x == xx
 
 
-class FutureDict(UserDict[K, Future[R]]):
-    def get_result(self) -> dict[K, R]:
+class FutureDict(UserDict[K, Future[T]]):
+    def get_result(self) -> dict[K, T]:
         return {k: v.get_result() for k, v in self.items()}
 
     def to_json(self) -> JsonDict:
@@ -124,8 +119,8 @@ class FutureDict(UserDict[K, Future[R]]):
         return {f'{k}.{kk}': vv for k, v in self.items() for kk, vv in v.get_workers().items()}
 
 
-class FutureList(UserList[Future[R]]):
-    def get_result(self) -> list[R]:
+class FutureList(UserList[Future[T]]):
+    def get_result(self) -> list[T]:
         return [v.get_result() for v in self]
 
     def to_json(self) -> JsonDict:

@@ -1,9 +1,8 @@
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 import pytest
-from taskproc import Task, Future, Const, Cache
+from taskproc import Task, Future, Const, Cache, FutureList, FutureDict
 import time
-from taskproc.future import FutureDict, FutureList
 from taskproc.graph import FailedTaskError
 
 
@@ -166,7 +165,7 @@ class CountElem(Task):
     def __init__(self, x: list | dict):
         self.x = x
 
-    def run_task(self) -> int:
+    def run_task(self):
         return len(self.x)
 
 
@@ -192,7 +191,7 @@ class MultiResultTask(Task):
     def __init__(self) -> None:
         pass
 
-    def run_task(self) -> dict[str, list[str]]:
+    def run_task(self):
         return {'hello': ['world', '42']}
 
 

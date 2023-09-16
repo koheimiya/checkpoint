@@ -2,7 +2,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from contextlib import ContextDecorator, redirect_stderr, redirect_stdout, ExitStack, AbstractContextManager
 from typing import Callable, Concatenate, Generic, Literal, Sequence, Type, TypeVar, Any, cast
-from typing_extensions import ParamSpec
+from typing_extensions import ParamSpec, Protocol
 from datetime import datetime
 from pathlib import Path
 from concurrent.futures import Executor, ProcessPoolExecutor, ThreadPoolExecutor
@@ -20,7 +20,7 @@ import sys
 
 
 from .types import JsonStr, TaskKey, JsonDict
-from .future import Future, FutureJSONEncoder, FutureMapperMixin, _PseudoFuture
+from .future import Future, FutureJSONEncoder, FutureMapperMixin
 from .database import Database
 from .graph import TaskGraph, TaskHandlerProtocol, run_task_graph
 
@@ -271,6 +271,11 @@ worker.dirobj.save_result(res, worker.instance.task_compress_level)
         self.dirobj.delete()
 
 
+class PartiallyTypedTask(Protocol[R]):
+    def run_task(self) -> R:
+        ...
+
+
 def wrap_task_init(init_method: Callable[Concatenate[Task[R], P], None]) -> Callable[Concatenate[Task[R], P], None]:
     def wrapped_init(self: Task, *args: P.args, **kwargs: P.kwargs) -> None:
         config = self.task_config
@@ -359,7 +364,7 @@ class Task(FutureMapperMixin, Generic[R]):
         self._task_worker.clear()
 
     def run_graph(
-            self, *,
+            self: PartiallyTypedTask[T], *,
             executor: Executor | None = None,
             rate_limits: dict[str, int] | None = None,
             detect_source_change: bool = False,
@@ -367,8 +372,8 @@ class Task(FutureMapperMixin, Generic[R]):
             show_progress: bool = False,
             force_interactive: bool = False,
             prefixes: dict[str, str] | None = None,
-            ) -> tuple[R, dict[str, Any]]:
-        assert isinstance(self, Task)
+            ) -> tuple[T, dict[str, Any]]:
+        self = cast(Task, self)
         graph = TaskGraph.build_from(self._task_worker, detect_source_change=detect_source_change)
 
         if executor is None:
@@ -389,7 +394,7 @@ class Task(FutureMapperMixin, Generic[R]):
     def cli(cls, args: Sequence[str] | None = None, defaults: dict[str, Any] | None = None) -> None:
         _run_with_argparse(cls, args=args, defaults=argparse.Namespace(**defaults) if defaults is not None else None)
 
-    def get_result(self: _PseudoFuture[T]) -> T:
+    def get_result(self: PartiallyTypedTask[T]) -> T:
         return cast(Task, self)._task_worker.get_result()
 
     def to_json(self) -> JsonDict:

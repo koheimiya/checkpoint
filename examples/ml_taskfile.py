@@ -1,4 +1,4 @@
-from typing import NewType, reveal_type
+from typing import NewType
 from taskproc import Task, Future
 from taskproc.future import FutureList
 
