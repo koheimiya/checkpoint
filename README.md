@@ -97,11 +97,12 @@ Use `--help` option for more details.
 ### Futures and Task Composition
 
 To be more precise, any attributes of a task implementing the `Future` protocol are considered as upstream tasks.
-Tasks and constants are futures.
+`Task`s and `Const`ants are futures.
 One can pass a future into the initialization of another task to compose the computation.
 ```python
 class MyTask(Task):
     def __init__(self, upstream: Future[int], other_args: Any):
+        self.upstream = upstream  # Register upstream task
         ...
 
 with Cache('./cache'):
@@ -111,7 +112,7 @@ with Cache('./cache'):
     }).run_graph()
 ```
 
-`FutureList` and `FutureDict` are for aggregating multiple `Future`s into one, allowing us to register multiple upstream tasks at once.
+`FutureList` and `FutureDict` can be used to aggregate multiple `Future`s into one, allowing us to register multiple upstream tasks at once.
 ```python
 from taskproc import FutureList, FutureDict
 
