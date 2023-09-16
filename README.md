@@ -267,12 +267,14 @@ Below is the list of the built-in properties/methods of `Task`. Do not override 
 | `cli`                  | class    | method   | `run_graph` with command line arguments |
 
 ## TODO
-- Simplify
-    - Drop the support of ThreadPoolExecutor.
+- Potential bug
+    - Current task argument serialization is not ideal since JSON is mapping two different values into the same text representation (e.g., tuple and list). Consider using consistency check `x == json.loads(json.dumps(x))`, or redesign the format.
 - Better UX
     - Add the signature of task to the description to `--kwargs` of CLI.
+    - Runtime validation of task arguments with type hint.
     - Add option to not cache result (need to address timestamp peeking and value passing).
-    - Validate non-Future task argument with type hint.
+- Simplify
+    - Drop the support of ThreadPoolExecutor.
 - Optional
     - Simple task graph visualizer.
     - Pydantic/dataclass support in task arguments (as an incompatible, but better-UX object with TypedDict).
