@@ -16,6 +16,7 @@ which is super cumbersome if one tries to edit the pipeline structure without ch
 * Decomposing long and complex computation into tasks, i.e., smaller units of work with dependencies.
 * Executing them in a distributed way, supporting multithreading/multiprocessing and local container/cluster-based dispatching.
 * Automatically creating/discarding/reusing caches per task. 
+* Full type hinting support.
 
 #### Nonfeatures
 * Periodic scheduling
@@ -44,23 +45,21 @@ class Choose(Task):
     """ Compute the binomial coefficient. """
 
     def __init__(self, n: int, k: int):
-        # Upstream tasks are prepared here.
-        # Al attributes of a task with type `Task` are considered as the upstream tasks.
+        # Declaration of the upstream tasks.
+        # Any attribute of a task with type `Task` is considered as an upstream task.
         if 0 < k < n:
             self.left = Choose(n - 1, k - 1)
             self.right = Choose(n - 1, k)
         elif k == 0 or k == n:
-            # We can just pass a value without computation in place of a task.
+            # We can also set dummy tasks with their value already calculated.
             self.left = Const(0)
             self.right = Const(1)
         else:
             raise ValueError(f'{(n, k)}')
 
     def run_task(self) -> int:
-        # Here we define the main computation of the task,
-        # which is delayed until it is necessary.
-
-        # The return values of the prerequisite tasks are accessible via `.get_result()`:
+        # The main computation of the task, which is delayed until necessary.
+        # The return values of the prerequisite tasks are accessible via `.get_result()`.
         return self.left.get_result() + self.right.get_result()
 
 # Construct a concrete task with the class instantiation, which should be inside of `Cache`.
@@ -71,15 +70,17 @@ with Cache('./cache'):  # Specifies the cache directory
 ans, stats = task.run_graph()  # `ans` should be 6 Choose 3, which is 20.
 
 # It greedily executes all the necessary tasks in the graph as parallel as possible
-# and then produces the return value of the task on which we call `run_graph()`, as well as some execution stats.
-# The return values of the intermediate tasks are cached on the specified location and reused on the fly whenever possible.
+# and then produces the return value of the task on which we call `run_graph()`,
+# as well as some execution stats. The return values of the intermediate tasks are
+# cached on the specified location and reused on the fly whenever possible.
 ```
 
 ### Commandline Interface
-`Task` has a utility classmethod to run with commandline arguments, which is useful if all you need is to run a single task that does everything necessary.
+`Task` has a utility classmethod to run with commandline arguments, which is useful if all you need is to run a single task.
 For example,
 ```python
 # taskfile.py
+# ...
 
 class Main(Task):
     def __init__(self):
@@ -94,30 +95,33 @@ if __name__ == '__main__':
 ```
 Use `--help` option for more details.
 
+
 ### Futures and Task Composition
 
 To be more precise, any attributes of a task implementing the `Future` protocol are considered as upstream tasks.
-`Task`s and `Const`ants are futures.
+For example, `Task`s and `Const`s are `Future`s.
 One can pass a future into the initialization of another task to compose the computation.
 ```python
+from taskproc import Future
+
 class MyTask(Task):
     def __init__(self, upstream: Future[int], other_args: Any):
         self.upstream = upstream  # Register upstream task
         ...
 
-with Cache('./cache'):
-    MyTask(
-        upstream=UpstreamTaskProducingInt(),
-        ...
-    }).run_graph()
+class Main(Task):
+    def __init__(self):
+        self.composed = MyTask(
+            upstream=UpstreamTaskProducingInt(),
+            ...
+        )
 ```
 
-`FutureList` and `FutureDict` can be used to aggregate multiple `Future`s into one, allowing us to register multiple upstream tasks at once.
+`FutureList` and `FutureDict` can be used to aggregate multiple futures into one, allowing us to register a batch of upstream futures inside tasks.
 ```python
 from taskproc import FutureList, FutureDict
 
 class SummarizeScores(Task):
-
     def __init__(self, task_dict: dict[str, Future[float]]):
         self.score_list = FutureList([ScoringTask(i) for i in range(10)])
         self.score_dict = FutureDict(task_dict)
@@ -128,7 +132,7 @@ class SummarizeScores(Task):
         return sum(self.score_dict.get_result().values()) / len(self.score_dict.get_result())
 ```
 
-If the output is a sequence or a mapping, one can directly access its element by indexing.
+If a future is wrapping a sequence or a mapping, one can directly access its element by indexing.
 The result is also a `Future`.
 ```python
 class MultiOutputTask(Task):
@@ -137,8 +141,9 @@ class MultiOutputTask(Task):
 
 class DownstreamTask(Task):
     def __init__(self):
-        self.dep = MultiOutputTask()['foo']
+        self.dep = MultiOutputTask()['foo']  # type of Future[int]
 ```
+
 
 ### Input-output Specification
 
@@ -148,13 +153,7 @@ Any non-jsonable objects can be also passed, as the output of a task.
 SomeTask(1, 'foo', bar={'baz': TaskProducingNonJsonableObj(), 'other': [1, 2, 3]})
 ```
 On the other hand, the output of a task, i.e., the return value of the `.run_task()` method, should be serializable with `cloudpickle`.
-The picked object is then compressed with `gzip`.
-The compression level can be changed as follows (defaults to 9).
-```python
-class NoCompressionTask(Task):
-    task_compress_level = 0
-    ...
-```
+
 
 ### Deleting Cache
 
@@ -171,6 +170,8 @@ with Cache('./cache'):
     # Delete all the cache associated with `Choose`.
     Choose.clear_all_tasks()            
 ```
+One can also delete caches directly from the disk location, i.e., `./cache` in the above.
+
 
 ### Data Directories
 
@@ -187,7 +188,7 @@ class TrainModel(Task):
 
 
 ### Prefix Command
-Tasks can be run with a prefix command, which is useful when working with a third-party job-scheduling or containerization command such as `jbsub` and `docker`.
+Tasks can be run with a prefix command, which is useful when working with a third-party job-scheduling or containerization tools such as `jbsub` and `docker`.
 ```python
 
 class TaskWithJobScheduler(Task):
@@ -197,7 +198,7 @@ class TaskWithJobScheduler(Task):
 
 ### Execution Policy Configuration
 
-One can control the task execution with `concurrent.futures.Executor` class:
+One can control the policy of parallelism with `concurrent.futures.Executor` classes.
 ```python
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 
@@ -212,23 +213,11 @@ with Cache('./cache'):
     MyTask().run_graph(executor=ThreadPoolExecutor())
 ```
 
-One can also control the concurrency at a task level:
-```python
-class TaskUsingGPU(Task):
-    task_channel = 'gpu'
-    ...
+### Advanced
 
-class AnotherTask(Task):
-    task_channel = ['gpu', 'memory']
-    ...
+#### Task Channels
 
-with Cache('./cache'):
-    SomeDownstreamTask().run_graph(rate_limits={TaskUsingGPU.task_name: 1})  # Execute one at a time
-```
-
-### Task Channels
-
-Task prefixes and concurrency limits can be also specified via task channels, which is useful for controlling the computation resource of multiple tasks at once.
+Task prefixes and concurrency limits can be also configured via task channels, which is useful for flexible control of the computational resource.
 ```python
 class TaskUsingGPU(Task):
     task_channel = 'gpu'
@@ -244,11 +233,18 @@ with Cache('./cache'):
         rate_limits={'gpu': 1, 'memory': 2},
         prefixes={'gpu': 'jbsub -wait -queue x86_1h -cores 16+1 -mem 64g'}
     ) 
-
 ```
 
+#### Cache Compression
+The picked object is then compressed with `gzip`.
+The compression level can be changed as follows (defaults to 9).
+```python
+class NoCompressionTask(Task):
+    task_compress_level = 0
+    ...
+```
 
-### Built-in properties/methods
+#### Built-in properties/methods
 Below is the list of the built-in properties/methods of `Task`. Do not override these attributes in the subclass.
 
 | Name | Owner | Type | Description |
@@ -266,6 +262,7 @@ Below is the list of the built-in properties/methods of `Task`. Do not override 
 | `clear_task`           | instance | method   | Clear the cache of the task instance |
 | `clear_all_tasks`      | class    | method   | Clear the cache of the task class |
 | `cli`                  | class    | method   | `run_graph` with command line arguments |
+
 
 ## TODO
 - Potential bug
