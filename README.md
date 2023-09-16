@@ -161,8 +161,7 @@ On the other hand, the output of a task, i.e., the return value of the `.run_tas
 It is possible to selectively discard cache: 
 ```python
 with Cache('./cache'):
-    # After some modificaiton of `Choose(3, 3)`,
-    # selectively discard the cache corresponding to the modification.
+    # Selectively discard the cache of a specific task.
     Choose(3, 3).clear_task()
 
     # `ans` is recomputed tracing back to the computation of `Choose(3, 3)`.
