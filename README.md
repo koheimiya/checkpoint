@@ -1,22 +1,21 @@
 # taskproc
 
-A lightweight pipeline building/execution/management tool written in pure Python.
-Internally, it depends on `DiskCache`, `cloudpickle` `networkx` and `concurrent.futures`.
-
-## Why `taskproc`?
-I need a pipeline-handling library that is thin and flexible as much as possible.
-* `Luigi` is not flexible enough: The definition of the dependencies and the definition of the task computation is tightly coupled at `luigi.Task`s, 
+A Python library for building/executing/managing task pipelines that is
+<!--## Why `taskproc`?
+`taskproc` is designed to be as thin and flexible as possible.
+Specifically,-->
+* Minimal yet sufficient for general use.
+* Focused on the composability of tasks for building large/complex pipelines effortlessly.
+<!-- * Inflexibility of `Luigi`: The definition of the dependencies and the definition of the task computation is tightly coupled at `luigi.Task`s, 
 which is super cumbersome if one tries to edit the pipeline structure without changing the computation of each task.
-* `Airflow` is too big and clumsy: It requires a message broker backend separately installed and run in background. It is also incompatible with non-pip package manager (such as Poetry).
-* Most of the existing libraries tend to build their own ecosystems that unnecessarily forces the user to follow the specific way of handling pipelines.
-
-`taskproc` aims to provide a language construct for defining computation by composition, ideally as simple as Python's built-in sytax of functions, with the support of automatic and configurable parallel execution and cache management.  
+* Unwieldiness of `Airflow`: It requires a message broker backend separately installed and run in background. It is also incompatible with non-pip package manager (such as Poetry).
+* Most of the existing libraries tend to build their own ecosystems that unnecessarily forces the user to follow the specific way of handling pipelines.-->
+<!-- `taskproc` aims to provide a language construct for defining computation by composition, ideally as simple as Python's built-in sytax of functions, with the support of automatic and configurable parallel execution and cache management.  -->
 
 #### Features
-* Decomposing long and complex computation into tasks, i.e., smaller units of work with dependencies.
-* Executing them in a distributed way, supporting multithreading/multiprocessing and local container/cluster-based dispatching.
-* Automatically creating/discarding/reusing caches per task. 
-* Full type hinting support.
+* User defines a long and complex computation by composing shorter and simpler units of work, i.e., tasks.
+* `taskproc` automatically executes them in a distributed way, supporting multithreading/multiprocessing and third-party job-controlling commands such as `jbsub` and `docker`. It also creates/reuses/discards a cache per task automatically. 
+* Full type-hinting support.
 
 #### Nonfeatures
 * Periodic scheduling
@@ -46,12 +45,12 @@ class Choose(Task):
 
     def __init__(self, n: int, k: int):
         # Declaration of the upstream tasks.
-        # Any attribute of a task with type `Task` is considered as an upstream task.
+        # Any instance of `Task` registered as an attirbute is considered as an upstream task.
         if 0 < k < n:
             self.left = Choose(n - 1, k - 1)
             self.right = Choose(n - 1, k)
         elif k == 0 or k == n:
-            # We can also set dummy tasks with their value already calculated.
+            # We can also set dummy tasks with their value already computed.
             self.left = Const(0)
             self.right = Const(1)
         else:
@@ -62,18 +61,17 @@ class Choose(Task):
         # The return values of the prerequisite tasks are accessible via `.get_result()`.
         return self.left.get_result() + self.right.get_result()
 
-# Construct a concrete task with the class instantiation, which should be inside of `Cache`.
+# A task pipeline is constructed with instantiation, which should be done inside the `Cache` context.
 with Cache('./cache'):  # Specifies the cache directory
-    task = Choose(6, 3)
+    task = Choose(6, 3)  # Builds a pipeline to compute 6 chooses 3.
 
-# To run the task graph, use the `run_graph()` method.
-ans, stats = task.run_graph()  # `ans` should be 6 Choose 3, which is 20.
-
-# It greedily executes all the necessary tasks in the graph as parallel as possible
+# Use the `run_graph()` method to run the pipeline.
+ans, stats = task.run_graph()  # `ans` should be 6 chooses 3, which is 20. `stats` is the execution statistics.
+```
+<!--# It greedily executes all the necessary tasks in the graph as parallel as possible
 # and then produces the return value of the task on which we call `run_graph()`,
 # as well as some execution stats. The return values of the intermediate tasks are
-# cached on the specified location and reused on the fly whenever possible.
-```
+# cached on the specified location and reused on the fly whenever possible.-->
 
 ### Commandline Interface
 `Task` has a utility classmethod to run with commandline arguments, which is useful if all you need is to run a single task.
@@ -105,20 +103,20 @@ One can pass a future into the initialization of another task to compose the com
 ```python
 from taskproc import Future
 
-class MyTask(Task):
+class DownstreamTask(Task):
     def __init__(self, upstream: Future[int], other_args: Any):
         self.upstream = upstream  # Register upstream task
         ...
 
 class Main(Task):
     def __init__(self):
-        self.composed = MyTask(
+        self.composed = DownstreamTask(
             upstream=UpstreamTaskProducingInt(),
             ...
         )
 ```
 
-`FutureList` and `FutureDict` can be used to aggregate multiple futures into one, allowing us to register a batch of upstream futures inside tasks.
+`FutureList` and `FutureDict` can be used to aggregate multiple futures into one, allowing us to register a batch of upstream futures.
 ```python
 from taskproc import FutureList, FutureDict
 
@@ -128,12 +126,12 @@ class SummarizeScores(Task):
         self.score_dict = FutureDict(task_dict)
 
     def run_task(self) -> float:
-        # `.get_result()` evaluates `FutureList[float]` and `FutureDict[str, float]` into
-        # `list[float]` and `dict[str, float]`, respectively.
+        # `.get_result()` evaluates `FutureList[T]` and `FutureDict[K, T]` into
+        # `list[T]` and `dict[K, T]`, respectively.
         return sum(self.score_dict.get_result().values()) / len(self.score_dict.get_result())
 ```
 
-If a future is wrapping a sequence or a mapping, one can directly access its element by indexing.
+If a future is wrapping a sequence or a mapping, one can directly access its element with the standard indexing operation.
 The result is also a `Future`.
 ```python
 class MultiOutputTask(Task):
@@ -146,7 +144,7 @@ class DownstreamTask(Task):
 ```
 
 
-### Input-output Specification
+### Input and Output Specifications
 
 In general, tasks can be initialized with any JSON serializable objects which may or may not contain futures.
 Any non-jsonable objects can be also passed, as the output of a task.
@@ -154,23 +152,6 @@ Any non-jsonable objects can be also passed, as the output of a task.
 SomeTask(1, 'foo', bar={'baz': TaskProducingNonJsonableObj(), 'other': [1, 2, 3]})
 ```
 On the other hand, the output of a task, i.e., the return value of the `.run_task()` method, should be serializable with `cloudpickle`.
-
-
-### Deleting Cache
-
-It is possible to selectively discard cache: 
-```python
-with Cache('./cache'):
-    # Selectively discard the cache of a specific task.
-    Choose(3, 3).clear_task()
-
-    # `ans` is recomputed tracing back to the computation of `Choose(3, 3)`.
-    ans, _ = Choose(6, 3).run_graph()
-    
-    # Delete all the cache associated with `Choose`.
-    Choose.clear_all_tasks()            
-```
-One can also delete caches directly from the disk location, i.e., `./cache` in the above.
 
 
 ### Data Directories
@@ -186,17 +167,31 @@ class TrainModel(Task):
         return model_path
 ```
 
+### Task Channel for Computational Resource Control
 
-### Prefix Command
-Tasks can be run with a prefix command, which is useful when working with a third-party job-scheduling or containerization tools such as `jbsub` and `docker`.
+Each task class can be labeld with "task channels".
+The task channels are useful to configure prefix commands and concurrency limits for controlling of computational resources.
 ```python
-
-class TaskWithJobScheduler(Task):
-    task_prefix_command = 'jbsub -wait -queue x86_1h -cores 16+1 -mem 64g'
+class TaskUsingGPU(Task):
+    task_channel = 'gpu'
     ...
+
+class AnotherTaskUsingGPU(Task):
+    task_channel = ['gpu', 'memory']
+    ...
+
+with Cache('./cache'):
+    # Channel-level prefix/concurrency control
+    SomeDownstreamTask().run_graph(
+        rate_limits={'gpu': 1, 'memory': 2},  # The number of tasks labeled with "gpu" running simultaneously is at most 1 (resp. "memory" is at most 2).
+        prefixes={'gpu': 'jbsub -wait -queue x86_1h -cores 16+1 -mem 64g'}  # Tasks labeled with "gpu" is run with the job-dispatching command "jbsub ...".
+    ) 
 ```
 
-### Execution Policy Configuration
+
+### Advanced Topics
+
+#### Execution Policy Configuration
 
 One can control the policy of parallelism with `concurrent.futures.Executor` classes.
 ```python
@@ -213,27 +208,30 @@ with Cache('./cache'):
     MyTask().run_graph(executor=ThreadPoolExecutor())
 ```
 
-### Advanced
-
-#### Task Channels
-
-Task prefixes and concurrency limits can be also configured via task channels, which is useful for flexible control of the computational resource.
+#### Default Prefix Command
+Tasks can be run with a prefix command, which is useful when working with a third-party job-scheduling or containerization tools such as `jbsub` and `docker`.
 ```python
-class TaskUsingGPU(Task):
-    task_channel = 'gpu'
-    ...
 
-class AnotherTaskUsingGPU(Task):
-    task_channel = ['gpu', 'memory']
+class TaskWithJobScheduler(Task):
+    task_prefix_command = 'jbsub -wait -queue x86_1h -cores 16+1 -mem 64g'
     ...
-
-with Cache('./cache'):
-    # Channel-level prefix/concurrency control
-    SomeDownstreamTask().run_graph(
-        rate_limits={'gpu': 1, 'memory': 2},
-        prefixes={'gpu': 'jbsub -wait -queue x86_1h -cores 16+1 -mem 64g'}
-    ) 
 ```
+
+#### Selective Cache Deletion
+
+It is possible to selectively discard cache: 
+```python
+with Cache('./cache'):
+    # Selectively discard the cache of a specific task.
+    Choose(3, 3).clear_task()
+
+    # `ans` is recomputed tracing back to the computation of `Choose(3, 3)`.
+    ans, _ = Choose(6, 3).run_graph()
+    
+    # Delete all the cache associated with `Choose`.
+    Choose.clear_all_tasks()            
+```
+One can also manage caches directly from the disk location, i.e., `./cache` in the above.
 
 #### Cache Compression
 The task output is compressed with `gzip`.
