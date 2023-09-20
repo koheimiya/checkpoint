@@ -79,7 +79,7 @@ ans, stats = task.run_graph()  # `ans` should be 6 chooses 3, which is 20. `stat
 For example, if you have
 ```python
 # taskfile.py
-from taskproc import Task, DefaultArguments
+from taskproc import Task, CLIDefaultArguments
 # ...
 
 class Main(Task):
@@ -90,7 +90,7 @@ class Main(Task):
         print(self.result.get_result())
 
 # Optionally you can configure default CLI arguments.
-DefaultArguments(
+CLIDefaultArguments(
     prefix={ ... },
     rate_limits={ ... },
     ...
