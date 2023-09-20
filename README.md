@@ -89,7 +89,7 @@ class Main(Task):
     def run_task(self):
         print(self.result.get_result())
 
-# Optionally you can configure default arguments.
+# Optionally you can configure default CLI arguments.
 DefaultArguments(
     prefix={ ... },
     rate_limits={ ... },
