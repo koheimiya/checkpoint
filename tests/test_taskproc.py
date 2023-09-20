@@ -58,7 +58,7 @@ def test_graph():
 
 
 class TaskA(Task):
-    task_channel = ['<mychan>', '<another_chan>']
+    task_label = ['<mychan>', '<another_chan>']
     def __init__(self): ...
 
     def run_task(self) -> str:
@@ -66,7 +66,7 @@ class TaskA(Task):
 
 
 class TaskB(Task):
-    task_channel = '<mychan>'
+    task_label = '<mychan>'
     def __init__(self): ...
     
     def run_task(self) -> str:
@@ -212,7 +212,7 @@ def test_mapping():
 
 class PrefixedJob(Task):
     task_prefix_command = 'bash tests/run_with_hello.bash'
-    task_channel = 'mychan'
+    task_label = 'mychan'
     def run_task(self) -> None:
         print('world')
         return

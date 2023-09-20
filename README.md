@@ -1,7 +1,7 @@
 # taskproc
 
 A Python library for building/executing/managing task pipelines that is
-<!--## Why `taskproc`?
+<!-- ## Why `taskproc`?
 `taskproc` is designed to be as thin and flexible as possible.
 Specifically,-->
 * Minimal yet sufficient for general use.
@@ -28,9 +28,10 @@ which is super cumbersome if one tries to edit the pipeline structure without ch
 ```
 pip install taskproc
 ```
-
+<!--
 ## Example
 See [here](examples/ml_taskfile.py) for a typical usage of `taskproc`.
+-->
 
 ## Documentation
 
@@ -167,21 +168,21 @@ class TrainModel(Task):
         return model_path
 ```
 
-### Task Channel for Computational Resource Control
+### Task Label for Computational Resource Control
 
-Each task class can be labeld with "task channels".
-The task channels are useful to configure prefix commands and concurrency limits for controlling of computational resources.
+Each task class can be tagged with multiple labels.
+The task labels are useful to configure prefix commands and concurrency limits for controlling of computational resources.
 ```python
 class TaskUsingGPU(Task):
-    task_channel = 'gpu'
+    task_label = 'gpu'
     ...
 
 class AnotherTaskUsingGPU(Task):
-    task_channel = ['gpu', 'memory']
+    task_label = ['gpu', 'memory']
     ...
 
 with Cache('./cache'):
-    # Channel-level prefix/concurrency control
+    # Label-wise prefix/concurrency control
     SomeDownstreamTask().run_graph(
         rate_limits={'gpu': 1, 'memory': 2},  # The number of tasks labeled with "gpu" running simultaneously is at most 1 (resp. "memory" is at most 2).
         prefixes={'gpu': 'jbsub -wait -queue x86_1h -cores 16+1 -mem 64g'}  # Tasks labeled with "gpu" is run with the job-dispatching command "jbsub ...".

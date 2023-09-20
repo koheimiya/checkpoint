@@ -100,7 +100,7 @@ class TaskWorker(Generic[R]):
 
     @property
     def channels(self) -> tuple[str, ...]:
-        _channel = self.instance.task_channel
+        _channel = self.instance.task_label
         channels: tuple[str, ...]
         if isinstance(_channel, str):
             channels = (_channel,)
@@ -300,7 +300,7 @@ class Task(FutureMapperMixin, Generic[R]):
     _task_worker: TaskWorker[R]
     task_compress_level: int = 9
     task_prefix_command: str = ''
-    task_channel: str | Sequence[str] = tuple()
+    task_label: str | Sequence[str] = tuple()
 
     def __init__(self) -> None:
         ...
