@@ -6,7 +6,7 @@ from typing import Any, Mapping
 from typing_extensions import Self, runtime_checkable, Protocol
 from collections import defaultdict
 from dataclasses import dataclass
-from concurrent.futures import Future, ProcessPoolExecutor, wait, FIRST_COMPLETED, Executor
+from concurrent.futures import Future, wait, FIRST_COMPLETED, Executor
 from pathlib import Path
 import logging
 
@@ -36,7 +36,7 @@ class TaskHandlerProtocol(Protocol):
     def to_tuple(self) -> TaskKey: ...
     def get_prerequisites(self) -> Mapping[str, TaskHandlerProtocol]: ...
     def peek_timestamp(self) -> datetime | None: ...
-    def set_result(self, execute_locally: bool, force_interactive: bool, prefix_command: str | None) -> None: ...
+    def set_result(self, execute_locally: bool, prefix_command: str | None) -> None: ...
     def dump_error_msg(self) -> str: ...
 
 
@@ -136,18 +136,18 @@ def run_task_graph(
         rate_limits: dict[str, int] | None = None,
         dump_graphs: bool = False,
         show_progress: bool = False,
-        force_interactive: bool = False,
         prefixes: dict[str, str] | None = None,
         ) -> dict[str, Any]:
     """ Consume task graph concurrently.
     """
-    if force_interactive:
-        LOGGER.warning(f'Interactive mode is detected. Concurrent execution is disabled.')
-        executor = LocalExecutor()
+    # if force_interactive:
+    #     LOGGER.warning(f'Interactive mode is detected. Concurrent execution is disabled.')
+    #     executor = LocalExecutor()
+    is_local = isinstance(executor, LocalExecutor)
 
-        if show_progress:
-            show_progress = False
-            LOGGER.warning(f'Interactive task is detected while `show_progress` is set True. The progress bars is turned off.')
+    if show_progress and is_local:
+        show_progress = False
+        LOGGER.warning(f'Interactive task is detected while `show_progress` is set True. The progress bars is turned off.')
 
     stats = {k: len(args) for k, args in graph.get_nodes_by_task().items()}
     LOGGER.debug(f'Following tasks will be called: {stats}')
@@ -200,14 +200,13 @@ def run_task_graph(
                     to_submit = keys
 
                 for key in to_submit:
-                    if force_interactive:
+                    if is_local:
                         LOGGER.info(f'Interactively executing {key}')
 
                     runner = _TaskRunner(
                             channels=channels,
                             task_data=cloudpickle.dumps(graph.get_task(key)),
-                            execute_locally=isinstance(executor, ProcessPoolExecutor),
-                            force_interactive=force_interactive,
+                            execute_locally=is_local,
                             prefix_command=_get_prefix_command(channels=channels, prefixes=prefixes),
                             )
                     future = executor.submit(runner)
@@ -263,7 +262,6 @@ class _TaskRunner:
     channels: TaskLabels
     task_data: bytes
     execute_locally: bool
-    force_interactive: bool
     prefix_command: str | None
 
     def __call__(self) -> tuple[TaskLabels, TaskKey]:
@@ -271,7 +269,6 @@ class _TaskRunner:
         assert isinstance(task, TaskHandlerProtocol)
         task.set_result(
                 execute_locally=self.execute_locally,
-                force_interactive=self.force_interactive,
                 prefix_command=self.prefix_command,
                 )
         return self.channels, task.to_tuple()

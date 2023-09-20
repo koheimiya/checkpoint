@@ -2,6 +2,10 @@
 includes = [
     "taskproc",
 ]
+
+[tool.pdm.scripts]
+taskproc = {cmd = "python -m taskproc"}
+
 [build-system]
 requires = ["pdm-backend"]
 build-backend = "pdm.backend"
@@ -39,3 +43,4 @@ snakeviz = "^2.2.0"
 dev = [
     "pudb>=2022.1.3",
 ]
+

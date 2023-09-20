@@ -1,6 +1,8 @@
 from __future__ import annotations
+import __main__
 from collections.abc import Iterable
 from contextlib import ContextDecorator, redirect_stderr, redirect_stdout, ExitStack, AbstractContextManager
+from dataclasses import asdict, dataclass
 from typing import Callable, Concatenate, Generic, Literal, Sequence, Type, TypeVar, Any, cast
 from typing_extensions import ParamSpec, Protocol
 from datetime import datetime
@@ -24,6 +26,7 @@ from .types import JsonStr, TaskKey, JsonDict
 from .future import Future, FutureJSONEncoder, FutureMapperMixin
 from .database import Database
 from .graph import TaskGraph, TaskHandlerProtocol, run_task_graph
+from .executors import LocalExecutor
 
 
 LOGGER = logging.getLogger(__name__)
@@ -147,6 +150,10 @@ class TaskWorker(Generic[R]):
             msg += prompt + s + end
 
         def peek_file(path: Path):
+            if not path.exists():
+                add_msgline('(NOT FOUND)')
+                return
+
             PEEK = 10
             with open(path) as f:
                 lines = list(enumerate(f.readlines()))
@@ -168,23 +175,27 @@ class TaskWorker(Generic[R]):
                         add_msgline(line, prompt=prompt, end='')
 
         add_msgline(f'Error occurred while running detached task {task_info}', prompt='')
-        add_msgline(f'Here is the detached stdout ({self.stdout_path}):')
+        add_msgline(f'Here is the detached caller\'s stdout ({self.stdout_path_caller}):')
+        peek_file(self.stdout_path_caller)
+        add_msgline(f'Here is the detached callee\'s stdout ({self.stdout_path}):')
         peek_file(self.stdout_path)
-        add_msgline(f'Here is the detached stderr ({self.stderr_path}):')
+        add_msgline(f'Here is the detached caller\'s stderr ({self.stderr_path_caller}):')
+        peek_file(self.stderr_path_caller)
+        add_msgline(f'Here is the detached callee\'s stderr ({self.stderr_path}):')
         peek_file(self.stderr_path)
         add_msgline(f'For more details, see {str(self.directory)}')
         return msg
 
-    def set_result(self, execute_locally: bool, force_interactive: bool, prefix_command: str | None = None) -> None:
+    def set_result(self, execute_locally: bool, prefix_command: str | None = None) -> None:
+        if prefix_command is None:
+            prefix_command = ''
+
         self.dirobj.initialize()
-        prefix = prefix_command if prefix_command is not None else self.instance.task_prefix_command
-        if force_interactive:
-            if prefix:
-                LOGGER.warning(f'Ignore prefix command and enter interactive mode. {prefix=}')
+        if execute_locally:
+            if prefix_command:
+                LOGGER.warning(f'Ignore prefix command and execute locally. {prefix_command=}')
             res = self.instance.run_task()
-            self.dirobj.save_result(res, compress_level=self.instance.task_compress_level)
-        elif execute_locally and prefix == '':
-            res = self.run_instance_task_with_captured_output()
+            # res = self.run_instance_task_with_captured_output()
             self.dirobj.save_result(res, compress_level=self.instance.task_compress_level)
         else:
             dir_ref = self.directory / 'tmp'
@@ -193,34 +204,22 @@ class TaskWorker(Generic[R]):
             dir_ref.mkdir()
             try:
                 worker_path = Path(dir_ref) / 'worker.pkl'
-                pycmd = f"""import pickle
-worker = pickle.load(open("{worker_path}", "rb"))
-res = worker.run_instance_task_with_captured_output()
-worker.dirobj.save_result(res, worker.instance.task_compress_level)
-""".replace('\n', '; ')
 
                 with open(worker_path, 'wb') as worker_ref:
                     cloudpickle.dump(self, worker_ref)
 
-                shell_command = ' '.join([prefix, sys.executable, '-c', repr(pycmd)])
+                pycmd = f'from taskproc.task import _run_worker as f; f("{worker_path}")'
+                shell_command = ' '.join([prefix_command, sys.executable, '-c', repr(pycmd)])
                 res = subprocess.run(
                         shell_command,
                         shell=True, text=True,
                         capture_output=True,
+                        env=os.environ,
                         )
-                def _prepend(path: Path, text: str):
-                    try:
-                        original_contents = open(path, 'r').read()
-                    except:
-                        original_contents = f'<error while loading {str(path)}>'
-
-                    with open(path, 'w') as f:
-                        f.write('=== caller log ===\n')
-                        f.write(text)
-                        f.write('=== callee log ===\n')
-                        f.write(original_contents)
-                _prepend(self.stdout_path, res.stdout)
-                _prepend(self.stderr_path, res.stderr)
+                with open(self.stdout_path_caller, 'w') as f:
+                    f.write(res.stdout)
+                with open(self.stderr_path_caller, 'w') as f:
+                    f.write(res.stderr)
                 res.check_returncode()
             finally:
                 shutil.rmtree(dir_ref)
@@ -251,6 +250,14 @@ worker.dirobj.save_result(res, worker.instance.task_compress_level)
     @property
     def stderr_path(self) -> Path:
         return self.dirobj.stderr_path
+
+    @property
+    def stdout_path_caller(self) -> Path:
+        return self.dirobj.stdout_path_caller
+
+    @property
+    def stderr_path_caller(self) -> Path:
+        return self.dirobj.stderr_path_caller
 
     @property
     def directory(self) -> Path:
@@ -301,7 +308,6 @@ class Task(FutureMapperMixin, Generic[R]):
     _task_config: TaskConfig[R]
     _task_worker: TaskWorker[R]
     task_compress_level: int = 9
-    task_prefix_command: str = ''
     task_label: str | Sequence[str] = tuple()
 
     def __init__(self) -> None:
@@ -359,6 +365,14 @@ class Task(FutureMapperMixin, Generic[R]):
     def task_stderr(self) -> Path:
         return self._task_worker.stderr_path
 
+    @property
+    def task_stdout_caller(self) -> Path:
+        return self._task_worker.stdout_path_caller
+
+    @property
+    def task_stderr_caller(self) -> Path:
+        return self._task_worker.stderr_path_caller
+
     @classmethod
     def clear_all_tasks(cls) -> None:
         cls.task_config.clear_all()
@@ -373,7 +387,6 @@ class Task(FutureMapperMixin, Generic[R]):
             detect_source_change: bool = False,
             dump_generations: bool = False,
             show_progress: bool = False,
-            force_interactive: bool = False,
             prefixes: dict[str, str] | None = None,
             ) -> tuple[T, dict[str, Any]]:
         self = cast(Task, self)
@@ -388,14 +401,13 @@ class Task(FutureMapperMixin, Generic[R]):
                 rate_limits=rate_limits,
                 dump_graphs=dump_generations,
                 show_progress=show_progress,
-                force_interactive=force_interactive,
                 prefixes=prefixes,
                 )
         return self._task_worker.get_result(), stats
 
     @classmethod
-    def cli(cls, args: Sequence[str] | None = None, defaults: dict[str, Any] | None = None) -> None:
-        _run_with_argparse(cls, args=args, defaults=argparse.Namespace(**defaults) if defaults is not None else None)
+    def cli(cls, args: Sequence[str] | None = None, defaults: Config | None = None) -> None:
+        _run_with_argparse(cls, args=args, defaults=defaults)
 
     def get_result(self: PartiallyTypedTask[T]) -> T:
         return cast(Task, self)._task_worker.get_result()
@@ -423,15 +435,26 @@ def _serialize_arguments(fn: Callable[P, Any], *args: P.args, **kwargs: P.kwargs
     return cast(JsonStr, json.dumps(arguments, separators=(',', ':'), sort_keys=True, cls=FutureJSONEncoder))
 
 
+@dataclass(frozen=True)
+class Config:
+    entrypoint: Type[Task] | None = None
+    loglevel: Literal['debug', 'info', 'warning', 'error'] = 'warning'
+    num_workers: int | None = None
+    kwargs: dict[str, Any] | None = None
+    prefix: dict[str, Any] | None = None
+    rate_limits: dict[str, Any] | None = None
+    exec_type: Literal['process', 'thread', 'local'] = 'process'
+
+
 def _run_with_argparse(
         task_class: Type[Task[Any]],
         args: Sequence[str] | None,
-        defaults: argparse.Namespace | None,
+        defaults: Config | None,
         ) -> None:
     if defaults is None:
         params = argparse.Namespace()
     else:
-        params = defaults
+        params = argparse.Namespace(**asdict(defaults))
 
     sig = inspect.signature(task_class.__init_orig__)
     param_types = {p.name: p.annotation for _, p in sig.parameters.items() if p.name != 'self'}
@@ -439,18 +462,24 @@ def _run_with_argparse(
     parser = argparse.ArgumentParser()
     parser.add_argument('-o', '--output', required=True, type=Path, help='Path to result directory.')       
     parser.add_argument('-l', '--loglevel', choices=['debug', 'info', 'warning', 'error'], default='warning')                     
-    parser.add_argument('-n', '--max-workers', type=int, default=None)
-    parser.add_argument('-i', '--interactive', action='store_true', help='Execute tasks locally and sequentially (for debugging)')
+    parser.add_argument('-n', '--num-workers', type=int, default=None)
     parser.add_argument('--kwargs', type=json.loads, default=None, help=f'Parameters of entrypoint in JSON dictionary of type: {param_types}')
     parser.add_argument('--prefix', type=json.loads, default=None, help='Prefix commands per channel in JSON dictionary.')
     parser.add_argument('--rate-limits', type=json.loads, default=None, help='Rate limits per channel in JSON dictionary.')                             
     parser.add_argument('-D', '--disable-detect-source-change', action='store_true', help='Disable automatic source change detection based on AST.')
-    parser.add_argument('-t', '--exec-type', choices=['process', 'thread'], default='process')                                         
+    parser.add_argument('-t', '--exec-type', choices=['process', 'thread', 'local'], default='thread')                                         
     parser.add_argument('--dont-force-entrypoint', action='store_true', help='Do nothing if the cache of the entripoint task is up-to-date.')       
     parser.add_argument('--dont-show-progress', action='store_true')                                                                                
+    parser.add_argument('--worker-path', default=None, type=Path)                                                                                
     parser.parse_args(args=args, namespace=params)
-
     logging.basicConfig(level=getattr(logging, params.loglevel.upper()))
+
+    # If worker-path is specified, ignore all the other arguments and run it.
+    if params.worker_path is not None:
+        _run_worker(worker_path=params.worker_path)
+        return
+
+    # Otherwise run the root task.
     LOGGER.info('Parsing args from CLI.')
     LOGGER.info(f'Params: {params}')
 
@@ -460,11 +489,10 @@ def _run_with_argparse(
             task_instance.clear_task()
         try:
             _, stats = task_instance.run_graph(
-                    executor=_get_executor(params.exec_type, max_workers=params.max_workers),
+                    executor=_get_executor(params.exec_type, max_workers=params.num_workers),
                     rate_limits=params.rate_limits,
                     detect_source_change=not params.disable_detect_source_change,
                     show_progress=not params.dont_show_progress,
-                    force_interactive=params.interactive,
                     prefixes=params.prefix,
                     )
         finally:
@@ -486,11 +514,19 @@ def _run_with_argparse(
         print("==== NO ENTRYPOINT STDERR (DETACHED) ====")
 
 
-def _get_executor(executor_name: Literal['process', 'thread'] | str, max_workers: int | None) -> Executor:
+def _get_executor(executor_name: Literal['process', 'thread', 'local'] | str, max_workers: int | None) -> Executor:
     if executor_name == 'process':
         executor_type = ProcessPoolExecutor
     elif executor_name == 'thread':
         executor_type = ThreadPoolExecutor
+    elif executor_name == 'local':
+        executor_type = LocalExecutor
     else:
         raise ValueError('Unrecognized executor name:', executor_name)
     return executor_type(max_workers=max_workers)
+
+
+def _run_worker(worker_path: Path):
+    worker = cloudpickle.load(open(worker_path, "rb"))
+    res = worker.run_instance_task_with_captured_output()
+    worker.dirobj.save_result(res, worker.instance.task_compress_level)

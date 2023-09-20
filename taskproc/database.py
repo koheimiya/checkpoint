@@ -53,7 +53,7 @@ class Database(Generic[T]):
                 )
 
     def __post_init__(self) -> None:
-        self.results_directory.mkdir(exist_ok=True)
+        self.results_directory.mkdir(exist_ok=True, parents=True)
 
     def get_instance_dir(self, key: JsonStr, deps: dict[str, Path]) -> InstanceDirectory[T]:
         return InstanceDirectory(
@@ -139,6 +139,14 @@ class InstanceDirectory(Generic[T]):
         return self.path / f'stderr.txt'
 
     @property
+    def stdout_path_caller(self) -> Path:
+        return self.path / f'caller-stdout.txt'
+
+    @property
+    def stderr_path_caller(self) -> Path:
+        return self.path / f'caller-stderr.txt'
+
+    @property
     def data_dir(self) -> Path:
         return self.path / 'data'
 
@@ -171,19 +179,24 @@ class InstanceDirectory(Generic[T]):
 @dataclass
 class IdTable:
     def __init__(self, path: Path | str) -> None:
-        self.table = dc.Cache(directory=path)
+        self.path = path
         self.cache: dict[Any, int] = {}
+
+    @property
+    def table(self) -> dc.Cache:
+        return dc.Cache(directory=self.path)
     
     def get(self, x: Any) -> int:
         out = self.cache.get(x)
         if out is not None:
             return out
 
-        with self.table.transact():
-            value = self.table.get(key=x)
+        table = self.table
+        with table.transact():
+            value = table.get(key=x)
             if value is None:
-                value = len(self.table)
-                self.table.set(key=x, value=value)
+                value = len(table)
+                table.set(key=x, value=value)
 
         self.cache[x] = value
         return value
@@ -192,8 +205,9 @@ class IdTable:
         return key in self.table
 
     def list_keys(self) -> list[str]:
-        with self.table.transact():
-            return list(map(str, self.table))
+        table = self.table
+        with table.transact():
+            return list(map(str, table))
 
     def clear(self) -> None:
         self.table.clear()

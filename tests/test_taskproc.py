@@ -3,6 +3,7 @@ from typing import Any
 import pytest
 from taskproc import Task, Future, Const, Cache, FutureList, FutureDict
 import time
+from taskproc.executors import LocalExecutor
 from taskproc.graph import FailedTaskError
 
 
@@ -211,7 +212,6 @@ def test_mapping():
 
 
 class PrefixedJob(Task):
-    task_prefix_command = 'bash tests/run_with_hello.bash'
     task_label = 'mychan'
     def run_task(self) -> None:
         print('world')
@@ -222,24 +222,26 @@ class PrefixedJob(Task):
 def test_prefix_command(capsys):
     PrefixedJob.clear_all_tasks()
     task = PrefixedJob()
-    task.run_graph(executor=ThreadPoolExecutor(max_workers=1))
+    task.run_graph(executor=ThreadPoolExecutor(), prefixes={PrefixedJob.task_name: 'bash tests/run_with_hello.bash'})
     captured = capsys.readouterr()
     assert captured.out == ''
     assert captured.err == ''
 
-    assert open(task.task_stdout, 'r').read() == '=== caller log ===\nhello\n=== callee log ===\nworld\n'
+    assert open(task.task_stdout_caller, 'r').read() == 'hello\n'
+    assert open(task.task_stdout, 'r').read() == 'world\n'
 
 
 @Cache('./.cache/tests')
 def test_prefix_command2(capsys):
     PrefixedJob.clear_all_tasks()
     task = PrefixedJob()
-    task.run_graph(executor=ThreadPoolExecutor(max_workers=1), prefixes={'mychan': ''})
+    task.run_graph(executor=ThreadPoolExecutor(), prefixes={'mychan': ''})
     captured = capsys.readouterr()
     assert captured.out == ''
     assert captured.err == ''
 
-    assert open(task.task_stdout, 'r').read() == '=== caller log ===\n=== callee log ===\nworld\n'
+    assert open(task.task_stdout_caller, 'r').read() == ''
+    assert open(task.task_stdout, 'r').read() == 'world\n'
 
 
 class SleepTask(Task):
@@ -257,9 +259,9 @@ def test_sleep_task():
     SleepTask.clear_all_tasks()
     task1 = SleepTask()
     task2 = SleepTask()
-    task3 = SleepTask(task1)
-    task4 = SleepTask(task2)
-    task5 = SleepTask(task3, task4)
+    task3 = SleepTask()
+    task4 = SleepTask()
+    task5 = SleepTask(task1, task2, task3, task4)
     start = time.perf_counter()
     task5.run_graph()
     elapsed = time.perf_counter() - start
@@ -276,7 +278,7 @@ class InteractiveJob(Task):
 def test_interactive(capsys):
     InteractiveJob.clear_all_tasks()
     task = InteractiveJob()
-    task.run_graph(executor=ThreadPoolExecutor(max_workers=1), force_interactive=True)
+    task.run_graph(executor=LocalExecutor())
     captured = capsys.readouterr()
     assert captured.out == 'world\n'
     assert captured.err == ''

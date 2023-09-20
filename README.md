@@ -69,16 +69,20 @@ with Cache('./cache'):  # Specifies the cache directory
 # Use the `run_graph()` method to run the pipeline.
 ans, stats = task.run_graph()  # `ans` should be 6 chooses 3, which is 20. `stats` is the execution statistics.
 ```
-<!--# It greedily executes all the necessary tasks in the graph as parallel as possible
+<!-- # It greedily executes all the necessary tasks in the graph as parallel as possible
 # and then produces the return value of the task on which we call `run_graph()`,
 # as well as some execution stats. The return values of the intermediate tasks are
 # cached on the specified location and reused on the fly whenever possible.-->
 
 ### Commandline Interface
-`Task` has a utility classmethod to run with commandline arguments, which is useful if all you need is to run a single task.
+`taskproc` has a utility classmethod to run with commandline arguments, which is useful if all you need is to run a single task.
 For example,
+```bash
+python -m taskproc ./taskfile.py -o path/to/cache/directory
+```
 ```python
 # taskfile.py
+from taskproc import Task, Config
 # ...
 
 class Main(Task):
@@ -89,11 +93,15 @@ class Main(Task):
         print(self.result.get_result())
 
 
-if __name__ == '__main__':
-    Main.cli()
+# Optionally you can configure how tasks are run inside the script.
+# __taskproc_config__ = Config(
+#     entrypoint=MyCustomTask,
+#     prefix={ ... },
+#     rate_limits={ ... },
+#     ...
+# )
 ```
-All the features of `taskproc` is accessible form CLI.
-Use `--help` option for more details.
+See also `python -m taskproc your_script.py --help` for more details.
 
 
 ### Futures and Task Composition
@@ -209,15 +217,6 @@ with Cache('./cache'):
     MyTask().run_graph(executor=ThreadPoolExecutor())
 ```
 
-#### Default Prefix Command
-Tasks can be run with a prefix command, which is useful when working with a third-party job-scheduling or containerization tools such as `jbsub` and `docker`.
-```python
-
-class TaskWithJobScheduler(Task):
-    task_prefix_command = 'jbsub -wait -queue x86_1h -cores 16+1 -mem 64g'
-    ...
-```
-
 #### Selective Cache Deletion
 
 It is possible to selectively discard cache: 
@@ -270,3 +269,5 @@ Below is the list of the built-in properties/methods of `Task`. Do not override 
     - Simple task graph visualizer.
     - Pydantic/dataclass support in task arguments (as an incompatible, but better-UX object with TypedDict).
     - Dynamic prefix generation with prefix template (e.g., for specifying the log locations).
+- Remove `DiscCache` and use `shelve.
+- Use methods in TaskWorker directly.

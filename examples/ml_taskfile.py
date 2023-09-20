@@ -71,7 +71,3 @@ class Main(Task):
         print('Running main')
         scores = [res['score'] for res in self.results.get_result()]
         print(scores)
-
-
-if __name__ == '__main__':
-    Main.cli()
