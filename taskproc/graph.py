@@ -6,7 +6,7 @@ from typing import Any, Mapping
 from typing_extensions import Self, runtime_checkable, Protocol
 from collections import defaultdict
 from dataclasses import dataclass
-from concurrent.futures import Future, wait, FIRST_COMPLETED, Executor
+from concurrent.futures import Future, ProcessPoolExecutor, wait, FIRST_COMPLETED, Executor
 from pathlib import Path
 import logging
 
@@ -36,7 +36,7 @@ class TaskHandlerProtocol(Protocol):
     def to_tuple(self) -> TaskKey: ...
     def get_prerequisites(self) -> Mapping[str, TaskHandlerProtocol]: ...
     def peek_timestamp(self) -> datetime | None: ...
-    def set_result(self, execute_locally: bool, prefix_command: str | None) -> None: ...
+    def set_result(self, on_child_process: bool, interactive: bool, prefix_command: str | None) -> None: ...
     def dump_error_msg(self) -> str: ...
 
 
@@ -144,6 +144,7 @@ def run_task_graph(
     #     LOGGER.warning(f'Interactive mode is detected. Concurrent execution is disabled.')
     #     executor = LocalExecutor()
     is_local = isinstance(executor, LocalExecutor)
+    is_process_pool = isinstance(executor, ProcessPoolExecutor)
 
     if show_progress and is_local:
         show_progress = False
@@ -206,7 +207,8 @@ def run_task_graph(
                     runner = _TaskRunner(
                             channels=channels,
                             task_data=cloudpickle.dumps(graph.get_task(key)),
-                            execute_locally=is_local,
+                            on_child_process=is_process_pool,
+                            interactive=is_local,
                             prefix_command=_get_prefix_command(channels=channels, prefixes=prefixes),
                             )
                     future = executor.submit(runner)
@@ -261,14 +263,16 @@ def try_getting_result(future: Future[tuple[TaskLabels, TaskKey]], task_key: Tas
 class _TaskRunner:
     channels: TaskLabels
     task_data: bytes
-    execute_locally: bool
+    on_child_process: bool
+    interactive: bool
     prefix_command: str | None
 
     def __call__(self) -> tuple[TaskLabels, TaskKey]:
         task = cloudpickle.loads(self.task_data)
         assert isinstance(task, TaskHandlerProtocol)
         task.set_result(
-                execute_locally=self.execute_locally,
+                on_child_process=self.on_child_process,
+                interactive=self.interactive,
                 prefix_command=self.prefix_command,
                 )
         return self.channels, task.to_tuple()

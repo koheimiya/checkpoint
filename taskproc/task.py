@@ -186,16 +186,20 @@ class TaskWorker(Generic[R]):
         add_msgline(f'For more details, see {str(self.directory)}')
         return msg
 
-    def set_result(self, execute_locally: bool, prefix_command: str | None = None) -> None:
+    def set_result(self, on_child_process: bool, interactive: bool, prefix_command: str | None = None) -> None:
         if prefix_command is None:
             prefix_command = ''
 
         self.dirobj.initialize()
+
+        execute_locally = (on_child_process and prefix_command == '') or interactive
         if execute_locally:
             if prefix_command:
                 LOGGER.warning(f'Ignore prefix command and execute locally. {prefix_command=}')
-            res = self.instance.run_task()
-            # res = self.run_instance_task_with_captured_output()
+            if interactive:
+                res = self.instance.run_task()
+            else:
+                res = self.run_instance_task_with_captured_output()
             self.dirobj.save_result(res, compress_level=self.instance.task_compress_level)
         else:
             dir_ref = self.directory / 'tmp'
