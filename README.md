@@ -78,11 +78,12 @@ ans, stats = task.run_graph()  # `ans` should be 6 chooses 3, which is 20. `stat
 `taskproc` has a utility classmethod to run with commandline arguments, which is useful if all you need is to run a single task.
 For example,
 ```bash
-python -m taskproc ./taskfile.py -o path/to/cache/directory
+python -m taskproc /your/taskfile.py -o path/to/cache/directory  # Calling with a script
+python -m your.taskfile              -o path/to/cache/directory  # Calling with a module
 ```
 ```python
 # taskfile.py
-from taskproc import Task, Config
+from taskproc import Task, DefaultArguments
 # ...
 
 class Main(Task):
@@ -92,16 +93,18 @@ class Main(Task):
     def run_task(self):
         print(self.result.get_result())
 
-
-# Optionally you can configure how tasks are run inside the script.
-# __taskproc_config__ = Config(
-#     entrypoint=MyCustomTask,
+# # Optionally you can configure default arguments.
+# DefaultArguments(
 #     prefix={ ... },
 #     rate_limits={ ... },
 #     ...
-# )
+# ).populate()
+
+# # If the file is a module, one must call the entrypoint task explicitly.
+# if __name__ == '__main__':
+#     Main.cli()
 ```
-See also `python -m taskproc your_script.py --help` for more details.
+See also `python -m taskproc your/script.py --help` or `python -m your.module --help` for more details.
 
 
 ### Futures and Task Composition

@@ -3,7 +3,7 @@ import __main__
 from collections.abc import Iterable
 from contextlib import ContextDecorator, redirect_stderr, redirect_stdout, ExitStack, AbstractContextManager
 from dataclasses import asdict, dataclass
-from typing import Callable, Concatenate, Generic, Literal, Sequence, Type, TypeVar, Any, cast
+from typing import Callable, ClassVar, Concatenate, Generic, Literal, Self, Sequence, Type, TypeVar, Any, cast
 from typing_extensions import ParamSpec, Protocol
 from datetime import datetime
 from pathlib import Path
@@ -406,7 +406,9 @@ class Task(FutureMapperMixin, Generic[R]):
         return self._task_worker.get_result(), stats
 
     @classmethod
-    def cli(cls, args: Sequence[str] | None = None, defaults: Config | None = None) -> None:
+    def cli(cls, args: Sequence[str] | None = None, defaults: DefaultArguments | None = None) -> None:
+        if defaults is None:
+            defaults = DefaultArguments.get_default()
         _run_with_argparse(cls, args=args, defaults=defaults)
 
     def get_result(self: PartiallyTypedTask[T]) -> T:
@@ -436,20 +438,27 @@ def _serialize_arguments(fn: Callable[P, Any], *args: P.args, **kwargs: P.kwargs
 
 
 @dataclass(frozen=True)
-class Config:
-    entrypoint: Type[Task] | None = None
+class DefaultArguments:
     loglevel: Literal['debug', 'info', 'warning', 'error'] = 'warning'
     num_workers: int | None = None
     kwargs: dict[str, Any] | None = None
     prefix: dict[str, Any] | None = None
     rate_limits: dict[str, Any] | None = None
     exec_type: Literal['process', 'thread', 'local'] = 'process'
+    _global: ClassVar[Self] | None = None
+
+    def populate(self):
+        type(self)._global = self
+
+    @classmethod
+    def get_default(cls):
+        return DefaultArguments() if cls._global is None else cls._global
 
 
 def _run_with_argparse(
         task_class: Type[Task[Any]],
         args: Sequence[str] | None,
-        defaults: Config | None,
+        defaults: DefaultArguments,
         ) -> None:
     if defaults is None:
         params = argparse.Namespace()
@@ -461,25 +470,18 @@ def _run_with_argparse(
 
     parser = argparse.ArgumentParser()
     parser.add_argument('-o', '--output', required=True, type=Path, help='Path to result directory.')       
-    parser.add_argument('-l', '--loglevel', choices=['debug', 'info', 'warning', 'error'], default='warning')                     
+    parser.add_argument('-l', '--loglevel', choices=['debug', 'info', 'warning', 'error'], default=defaults.loglevel)
     parser.add_argument('-n', '--num-workers', type=int, default=None)
-    parser.add_argument('--kwargs', type=json.loads, default=None, help=f'Parameters of entrypoint in JSON dictionary of type: {param_types}')
-    parser.add_argument('--prefix', type=json.loads, default=None, help='Prefix commands per channel in JSON dictionary.')
-    parser.add_argument('--rate-limits', type=json.loads, default=None, help='Rate limits per channel in JSON dictionary.')                             
+    parser.add_argument('--kwargs', type=json.loads, default=defaults.kwargs, help=f'Parameters of entrypoint in JSON dictionary of type: {param_types}')
+    parser.add_argument('--prefix', type=json.loads, default=defaults.prefix, help='Prefix commands per channel in JSON dictionary.')
+    parser.add_argument('--rate-limits', type=json.loads, default=defaults.rate_limits, help='Rate limits per channel in JSON dictionary.')                             
     parser.add_argument('-D', '--disable-detect-source-change', action='store_true', help='Disable automatic source change detection based on AST.')
-    parser.add_argument('-t', '--exec-type', choices=['process', 'thread', 'local'], default='thread')                                         
+    parser.add_argument('-t', '--exec-type', choices=['process', 'thread', 'local'], default=defaults.exec_type)                                         
     parser.add_argument('--dont-force-entrypoint', action='store_true', help='Do nothing if the cache of the entripoint task is up-to-date.')       
     parser.add_argument('--dont-show-progress', action='store_true')                                                                                
-    parser.add_argument('--worker-path', default=None, type=Path)                                                                                
     parser.parse_args(args=args, namespace=params)
+
     logging.basicConfig(level=getattr(logging, params.loglevel.upper()))
-
-    # If worker-path is specified, ignore all the other arguments and run it.
-    if params.worker_path is not None:
-        _run_worker(worker_path=params.worker_path)
-        return
-
-    # Otherwise run the root task.
     LOGGER.info('Parsing args from CLI.')
     LOGGER.info(f'Params: {params}')
 

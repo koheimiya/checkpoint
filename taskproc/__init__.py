@@ -9,12 +9,12 @@ Limitations:
     - No priority-based scheduling.
 """
 from .future import Future, Const, FutureList, FutureDict
-from .task import Task, Cache, Config
+from .task import Task, Cache, DefaultArguments
 from .graph import FailedTaskError
 
 
 __EXPORT__ = [
         Future, Const, FutureList, FutureDict,
-        Task, Cache, Config,
+        Task, Cache, DefaultArguments,
         FailedTaskError
         ]
