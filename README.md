@@ -271,3 +271,4 @@ Below is the list of the built-in properties/methods of `Task`. Do not override 
     - Dynamic prefix generation with prefix template (e.g., for specifying the log locations).
 - Remove `DiscCache` and use `shelve.
 - Use methods in TaskWorker directly.
+- TaskConfig should be accessible outside Cache context.
