@@ -76,11 +76,7 @@ ans, stats = task.run_graph()  # `ans` should be 6 chooses 3, which is 20. `stat
 
 ### Commandline Interface
 `taskproc` has a utility classmethod to run with commandline arguments, which is useful if all you need is to run a single task.
-For example,
-```bash
-python -m taskproc /your/taskfile.py -o path/to/cache/directory  # Calling with a script
-python -m your.taskfile              -o path/to/cache/directory  # Calling with a module
-```
+For example, if you have
 ```python
 # taskfile.py
 from taskproc import Task, DefaultArguments
@@ -93,18 +89,40 @@ class Main(Task):
     def run_task(self):
         print(self.result.get_result())
 
-# # Optionally you can configure default arguments.
-# DefaultArguments(
-#     prefix={ ... },
-#     rate_limits={ ... },
-#     ...
-# ).populate()
-
-# # If the file is a module, one must call the entrypoint task explicitly.
-# if __name__ == '__main__':
-#     Main.cli()
+# Optionally you can configure default arguments.
+DefaultArguments(
+    prefix={ ... },
+    rate_limits={ ... },
+    ...
+).populate()
 ```
-See also `python -m taskproc your/script.py --help` or `python -m your.module --help` for more details.
+
+Then `Main` task can be run with CLI:
+```bash
+python -m taskproc /path/to/taskfile.py -o /path/to/cache/directory
+```
+Besides, if you have the entrypoint inside some module, you can run it with
+```bash
+python -m module.path.to.taskfile -o /path/to/cache/directory
+```
+where
+```python
+# taskfile.py
+from taskproc import Task
+# ...
+
+class Main(Task):
+    def __init__(self):
+        self.result = Choose(100, 50)
+    
+    def run_task(self):
+        print(self.result.get_result())
+
+# You must call the entrypoint task explicitly.
+if __name__ == '__main__':
+    Main.cli()
+```
+See also `python -m taskproc /path/to/taskfile.py --help` or `python -m module.path.to.taskfile --help` for more details.
 
 
 ### Futures and Task Composition
