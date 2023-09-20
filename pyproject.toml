@@ -3,13 +3,9 @@ includes = [
     "taskproc",
 ]
 
-[tool.pdm.scripts]
-taskproc = {cmd = "python -m taskproc"}
-
 [build-system]
 requires = ["pdm-backend"]
 build-backend = "pdm.backend"
-
 
 [project]
 authors = [
@@ -44,3 +40,5 @@ dev = [
     "pudb>=2022.1.3",
 ]
 
+[project.scripts]
+taskproc = "taskproc.__main__:main"

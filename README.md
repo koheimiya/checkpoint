@@ -99,17 +99,17 @@ DefaultArguments(
 
 Then `Main` task can be run with CLI:
 ```bash
+taskproc /path/to/taskfile.py -o /path/to/cache/directory
+```
+or
+```bash
 python -m taskproc /path/to/taskfile.py -o /path/to/cache/directory
 ```
 Besides, if you have the entrypoint inside some module, you can run it with
-```bash
-python -m module.path.to.taskfile -o /path/to/cache/directory
-```
-where
 ```python
 # taskfile.py
 from taskproc import Task
-# ...
+...
 
 class Main(Task):
     def __init__(self):
@@ -118,11 +118,17 @@ class Main(Task):
     def run_task(self):
         print(self.result.get_result())
 
-# You must call the entrypoint task explicitly.
+...
+
+# Must call the entrypoint explicitly.
 if __name__ == '__main__':
     Main.cli()
 ```
-See also `python -m taskproc /path/to/taskfile.py --help` or `python -m module.path.to.taskfile --help` for more details.
+and
+```bash
+python -m module.path.to.taskfile -o /path/to/cache/directory
+```
+See also `taskproc /path/to/taskfile.py --help` or `python -m module.path.to.taskfile --help` for more details.
 
 
 ### Futures and Task Composition
