@@ -91,7 +91,7 @@ def test_multiple_tasks():
     TaskC.clear_all_tasks()
     main = TaskC()
     assert main.run_graph(rate_limits={'<mychan>': 1})[0] == 'hello, world'
-    assert TaskB()._task_worker.channels == (TaskB.task_config.name, '<mychan>')
+    assert TaskB()._task_worker.labels == (TaskB.task_config.name, '<mychan>')
     assert main.task_compress_level == 0
 
 

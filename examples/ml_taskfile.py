@@ -51,7 +51,7 @@ class TestModel(Task):
 
 
 class Main(Task):
-    def __init__(self):
+    def __init__(self, test: bool):
         self.results = FutureList[dict[str, int]]()
         for i in range(10):
             dataset = PreprocessData('mydata', split_ratio=.8, seed=i)

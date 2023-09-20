@@ -14,19 +14,21 @@ from tqdm.auto import tqdm
 import cloudpickle
 import networkx as nx
 
+from taskproc.executors import LocalExecutor
+
 from .types import JsonStr, TaskKey
 
 
 LOGGER = logging.getLogger(__name__)
 
 
-ChannelLabels = tuple[str, ...]
+TaskLabels = tuple[str, ...]
 
 
 @runtime_checkable
 class TaskHandlerProtocol(Protocol):
     @property
-    def channels(self) -> ChannelLabels: ...
+    def labels(self) -> TaskLabels: ...
     @property
     def source_timestamp(self) -> datetime: ...
     @property
@@ -98,17 +100,17 @@ class TaskGraph:
         TR.add_nodes_from(self.G.nodes(data=True))
         self.G = TR
 
-    def get_initial_tasks(self) -> dict[ChannelLabels, list[TaskKey]]:
+    def get_initial_tasks(self) -> dict[TaskLabels, list[TaskKey]]:
         leaves = [x for x in self.G if self.G.in_degree(x) == 0]
         return self._group_by_channels(leaves)
 
-    def _group_by_channels(self, nodes: list[TaskKey]) -> dict[ChannelLabels, list[TaskKey]]:
+    def _group_by_channels(self, nodes: list[TaskKey]) -> dict[TaskLabels, list[TaskKey]]:
         out = defaultdict(list)
         for x in nodes:
-            out[self.get_task(x).channels].append(x)
+            out[self.get_task(x).labels].append(x)
         return out
 
-    def pop_with_new_leaves(self, x: TaskKey, disallow_non_leaf: bool = True) -> dict[ChannelLabels, list[TaskKey]]:
+    def pop_with_new_leaves(self, x: TaskKey, disallow_non_leaf: bool = True) -> dict[TaskLabels, list[TaskKey]]:
         if disallow_non_leaf:
             assert not list(self.G.predecessors(x))
 
@@ -141,9 +143,11 @@ def run_task_graph(
     """
     if force_interactive:
         LOGGER.warning(f'Interactive mode is detected. Concurrent execution is disabled.')
-    if force_interactive and show_progress:
-        show_progress = False
-        LOGGER.warning(f'Interactive task is detected while `show_progress` is set True. The progress bars is turned off.')
+        executor = LocalExecutor()
+
+        if show_progress:
+            show_progress = False
+            LOGGER.warning(f'Interactive task is detected while `show_progress` is set True. The progress bars is turned off.')
 
     stats = {k: len(args) for k, args in graph.get_nodes_by_task().items()}
     LOGGER.debug(f'Following tasks will be called: {stats}')
@@ -164,7 +168,7 @@ def run_task_graph(
 
     # Execute tasks
     standby = graph.get_initial_tasks()
-    in_process: dict[Future[tuple[ChannelLabels, TaskKey]], TaskKey] = dict()
+    in_process: dict[Future[tuple[TaskLabels, TaskKey]], TaskKey] = dict()
 
     with ExitStack() as stack:
         for pbar in progressbars.values():
@@ -182,7 +186,7 @@ def run_task_graph(
                 info['generations'].append(graph.get_nodes_by_task())
 
             # Submit all leaf tasks
-            leftover: dict[ChannelLabels, list[TaskKey]] = {}
+            leftover: dict[TaskLabels, list[TaskKey]] = {}
             for channels, keys in standby.items():
                 if any(chan in rate_limits for chan in channels):
                     free = min(rate_limits[chan] - occupied[chan] for chan in channels if chan in rate_limits)
@@ -196,6 +200,9 @@ def run_task_graph(
                     to_submit = keys
 
                 for key in to_submit:
+                    if force_interactive:
+                        LOGGER.info(f'Interactively executing {key}')
+
                     runner = _TaskRunner(
                             channels=channels,
                             task_data=cloudpickle.dumps(graph.get_task(key)),
@@ -203,12 +210,7 @@ def run_task_graph(
                             force_interactive=force_interactive,
                             prefix_command=_get_prefix_command(channels=channels, prefixes=prefixes),
                             )
-                    if not force_interactive:
-                        future = executor.submit(runner)
-                    else:
-                        future = Future()
-                        LOGGER.info(f'Interactively executing {key}')
-                        future.set_result(runner())
+                    future = executor.submit(runner)
                     in_process[future] = key
 
             # Wait for the first tasks to complete
@@ -248,7 +250,7 @@ class FailedTaskError(Exception):
         self.task = task
 
 
-def try_getting_result(future: Future[tuple[ChannelLabels, TaskKey]], task_key: TaskKey, graph: TaskGraph) -> tuple[ChannelLabels, TaskKey]:
+def try_getting_result(future: Future[tuple[TaskLabels, TaskKey]], task_key: TaskKey, graph: TaskGraph) -> tuple[TaskLabels, TaskKey]:
     try:
         return future.result()
     except Exception as e:
@@ -258,13 +260,13 @@ def try_getting_result(future: Future[tuple[ChannelLabels, TaskKey]], task_key: 
 
 @dataclass
 class _TaskRunner:
-    channels: ChannelLabels
+    channels: TaskLabels
     task_data: bytes
     execute_locally: bool
     force_interactive: bool
     prefix_command: str | None
 
-    def __call__(self) -> tuple[ChannelLabels, TaskKey]:
+    def __call__(self) -> tuple[TaskLabels, TaskKey]:
         task = cloudpickle.loads(self.task_data)
         assert isinstance(task, TaskHandlerProtocol)
         task.set_result(
@@ -275,7 +277,7 @@ class _TaskRunner:
         return self.channels, task.to_tuple()
 
 
-def _get_prefix_command(channels: ChannelLabels, prefixes: dict[str, str] | None) -> str | None:
+def _get_prefix_command(channels: TaskLabels, prefixes: dict[str, str] | None) -> str | None:
     if prefixes is None:
         return None
     hit = [(chan, prefixes[chan]) for chan in channels if chan in prefixes]

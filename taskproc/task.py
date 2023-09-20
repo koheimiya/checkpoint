@@ -17,6 +17,7 @@ import shutil
 import cloudpickle
 import subprocess
 import sys
+import inspect
 
 
 from .types import JsonStr, TaskKey, JsonDict
@@ -99,7 +100,7 @@ class TaskWorker(Generic[R]):
                 )
 
     @property
-    def channels(self) -> tuple[str, ...]:
+    def labels(self) -> tuple[str, ...]:
         _channel = self.instance.task_label
         channels: tuple[str, ...]
         if isinstance(_channel, str):
@@ -296,6 +297,7 @@ def wrap_task_init(init_method: Callable[Concatenate[Task[R], P], None]) -> Call
 
 
 class Task(FutureMapperMixin, Generic[R]):
+    __init_orig__: Any
     _task_config: TaskConfig[R]
     _task_worker: TaskWorker[R]
     task_compress_level: int = 9
@@ -310,6 +312,7 @@ class Task(FutureMapperMixin, Generic[R]):
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
         # Wrap initializer to make __init__ lazy
+        cls.__init_orig__ = cls.__init__
         cls.__init__ = wrap_task_init(cls.__init__)  # type: ignore
         super().__init_subclass__(**kwargs)
 
@@ -429,12 +432,16 @@ def _run_with_argparse(
         params = argparse.Namespace()
     else:
         params = defaults
+
+    sig = inspect.signature(task_class.__init_orig__)
+    param_types = {p.name: p.annotation for _, p in sig.parameters.items() if p.name != 'self'}
+
     parser = argparse.ArgumentParser()
     parser.add_argument('-o', '--output', required=True, type=Path, help='Path to result directory.')       
     parser.add_argument('-l', '--loglevel', choices=['debug', 'info', 'warning', 'error'], default='warning')                     
     parser.add_argument('-n', '--max-workers', type=int, default=None)
     parser.add_argument('-i', '--interactive', action='store_true', help='Execute tasks locally and sequentially (for debugging)')
-    parser.add_argument('--kwargs', type=json.loads, default=None, help='Parameters of entrypoint in JSON dictionary.')                             
+    parser.add_argument('--kwargs', type=json.loads, default=None, help=f'Parameters of entrypoint in JSON dictionary of type: {param_types}')
     parser.add_argument('--prefix', type=json.loads, default=None, help='Prefix commands per channel in JSON dictionary.')
     parser.add_argument('--rate-limits', type=json.loads, default=None, help='Rate limits per channel in JSON dictionary.')                             
     parser.add_argument('-D', '--disable-detect-source-change', action='store_true', help='Disable automatic source change detection based on AST.')
