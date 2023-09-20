@@ -108,17 +108,10 @@ python -m taskproc /path/to/taskfile.py -o /path/to/cache/directory
 Besides, if you have the entrypoint inside some module, you can run it with
 ```python
 # taskfile.py
-from taskproc import Task
 ...
 
 class Main(Task):
-    def __init__(self):
-        self.result = Choose(100, 50)
-    
-    def run_task(self):
-        print(self.result.get_result())
-
-...
+    ...
 
 # Must call the entrypoint explicitly.
 if __name__ == '__main__':
