@@ -3,8 +3,8 @@ import __main__
 from collections.abc import Iterable
 from contextlib import ContextDecorator, redirect_stderr, redirect_stdout, ExitStack, AbstractContextManager
 from dataclasses import asdict, dataclass
-from typing import Callable, ClassVar, Concatenate, Generic, Literal, Self, Sequence, Type, TypeVar, Any, cast, final
-from typing_extensions import ParamSpec, Protocol
+from typing import Callable, ClassVar, Concatenate, Generic, Literal, Sequence, Type, TypeVar, Any, cast, final
+from typing_extensions import ParamSpec, Protocol, Self
 from datetime import datetime
 from pathlib import Path
 from concurrent.futures import Executor, ProcessPoolExecutor, ThreadPoolExecutor
