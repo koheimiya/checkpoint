@@ -26,7 +26,7 @@ TaskLabels = tuple[str, ...]
 
 
 @runtime_checkable
-class TaskHandlerProtocol(Protocol):
+class TaskWorkerProtocol(Protocol):
     @property
     def labels(self) -> TaskLabels: ...
     @property
@@ -34,7 +34,7 @@ class TaskHandlerProtocol(Protocol):
     @property
     def directory(self) -> Path: ...
     def to_tuple(self) -> TaskKey: ...
-    def get_prerequisites(self) -> Mapping[str, TaskHandlerProtocol]: ...
+    def get_prerequisites(self) -> Mapping[str, TaskWorkerProtocol]: ...
     def peek_timestamp(self) -> datetime | None: ...
     def set_result(self, on_child_process: bool, interactive: bool, prefix_command: str | None) -> None: ...
     def dump_error_msg(self) -> str: ...
@@ -46,7 +46,7 @@ class TaskGraph:
     detect_source_change: bool
 
     @classmethod
-    def build_from(cls, root: TaskHandlerProtocol, detect_source_change: bool) -> Self:
+    def build_from(cls, root: TaskWorkerProtocol, detect_source_change: bool) -> Self:
         G = nx.DiGraph()
         seen: set[TaskKey] = set()
         to_expand = [root]
@@ -67,7 +67,7 @@ class TaskGraph:
     def size(self) -> int:
         return len(self.G)
 
-    def get_task(self, key: TaskKey) -> TaskHandlerProtocol:
+    def get_task(self, key: TaskKey) -> TaskWorkerProtocol:
         return self.G.nodes[key]['task']
 
     def trim(self) -> None:
@@ -246,7 +246,7 @@ def run_task_graph(
 
 
 class FailedTaskError(Exception):
-    def __init__(self, task: TaskHandlerProtocol, msg: str):
+    def __init__(self, task: TaskWorkerProtocol, msg: str):
         super().__init__(msg)
         self.task = task
 
@@ -269,7 +269,7 @@ class _TaskRunner:
 
     def __call__(self) -> tuple[TaskLabels, TaskKey]:
         task = cloudpickle.loads(self.task_data)
-        assert isinstance(task, TaskHandlerProtocol)
+        assert isinstance(task, TaskWorkerProtocol)
         task.set_result(
                 on_child_process=self.on_child_process,
                 interactive=self.interactive,

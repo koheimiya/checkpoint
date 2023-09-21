@@ -39,7 +39,7 @@ See [here](examples/ml_taskfile.py) for a typical usage of `taskproc`.
 
 We define a task by class.
 ```python
-from taskproc import Task, Const, Cache
+from taskproc import Task, Const, Graph
 
 class Choose(Task):
     """ Compute the binomial coefficient. """
@@ -62,8 +62,8 @@ class Choose(Task):
         # The return values of the prerequisite tasks are accessible via `.get_result()`.
         return self.left.get_result() + self.right.get_result()
 
-# A task pipeline is constructed with instantiation, which should be done inside the `Cache` context.
-with Cache('./cache'):  # Specifies the cache directory
+# A task pipeline is constructed with instantiation, which should be done inside the `Graph` context.
+with Graph('./cache'):  # Specifies the directory to store the cache.
     task = Choose(6, 3)  # Builds a pipeline to compute 6 chooses 3.
 
 # Use the `run_graph()` method to run the pipeline.
@@ -91,9 +91,7 @@ class Main(Task):
 
 # Optionally you can configure default CLI arguments.
 CLIDefaultArguments(
-    prefix={ ... },
-    rate_limits={ ... },
-    ...
+    # ...
 ).populate()
 ```
 
@@ -209,11 +207,20 @@ class AnotherTaskUsingGPU(Task):
     task_label = ['gpu', 'memory']
     ...
 
-with Cache('./cache'):
+with Graph('./cache'):
     # Label-wise prefix/concurrency control
     SomeDownstreamTask().run_graph(
-        rate_limits={'gpu': 1, 'memory': 2},  # The number of tasks labeled with "gpu" running simultaneously is at most 1 (resp. "memory" is at most 2).
-        prefixes={'gpu': 'jbsub -wait -queue x86_1h -cores 16+1 -mem 64g'}  # Tasks labeled with "gpu" is run with the job-dispatching command "jbsub ...".
+        # The number of tasks labeled with "gpu" running simultaneously is at most 2 (resp. "memory" is at most 1).
+        rate_limits={
+            'gpu': 2,
+            'memory': 1,
+            TaskUsingGPU.task_name: 5,  # Each task is also labeld with `cls.task_name` by default.
+            },
+        prefixes={
+            # Task labeled with "gpu" is run with the job-dispatching command "jbsub ...".
+            # Left labels prevail in the prefix collision.
+            'gpu': 'jbsub -wait -queue x86_1h -cores 16+1 -mem 64g'  
+            }
     ) 
 ```
 
@@ -229,7 +236,7 @@ from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 class MyTask(Task):
     ...
 
-with Cache('./cache'):
+with Graph('./cache'):
     # Limit the number of parallel workers
     MyTask().run_graph(executor=ProcessPoolExecutor(max_workers=2))
     
@@ -241,7 +248,7 @@ with Cache('./cache'):
 
 It is possible to selectively discard cache: 
 ```python
-with Cache('./cache'):
+with Graph('./cache'):
     # Selectively discard the cache of a specific task.
     Choose(3, 3).clear_task()
 
@@ -263,23 +270,25 @@ class NoCompressionTask(Task):
 ```
 
 #### Built-in properties/methods
-Below is the list of the built-in properties/methods of `Task`. Do not override these attributes in the subclass.
+Below is the list of the built-in attributes/properties/methods of `Task`. Do not override these attributes in the subclass.
 
 | Name | Owner | Type | Description |
 |--|--|--|--|
-| `task_name`            | class    | property | String id of the task class |
-| `task_id`              | instance | property | Integer id of the task, unique within the same task class  |
-| `task_args`            | instance | property | The arguments of the task in JSON |
-| `task_directory`       | instance | property | Path to the data directory of the task |
-| `task_stdout`          | instance | property | Path to the task's stdout |
-| `task_stderr`          | instance | property | Path to the task's stderr |
-| `run_task`             | instance | method   | Run the task |
-| `run_graph`            | instance | method   | Run the task after necessary upstream tasks and save the results in the cache |
-| `get_result`           | instance | method   | Get the result of the task (fails if the result is missing) |
-| `to_json`              | instance | method   | Serialize itself as a JSON dictionary |
-| `clear_task`           | instance | method   | Clear the cache of the task instance |
-| `clear_all_tasks`      | class    | method   | Clear the cache of the task class |
-| `cli`                  | class    | method   | `run_graph` with command line arguments |
+| `run_task`            | instance  | method    | Run the task |
+| `task_name`           | class     | property  | String id of the task class |
+| `task_directory`      | instance  | property  | Path to the data directory of the task |
+| `run_graph`           | instance  | method    | Run the task after necessary upstream tasks and save the results in the cache |
+| `cli`                 | class     | method    | `run_graph` with command line arguments |
+| `clear_task`          | instance  | method    | Clear the cache of the task instance |
+| `clear_all_tasks`     | class     | method    | Clear the cache of the task class |
+| `get_task_config`     | class     | method    | Get task config from the current graph |
+| `task_worker`         | instance  | attribute | Task worker of instance |
+| `task_config`         | instance  | attribute | Task config of instance |
+| `task_compress_level` | instance  | attribute | Compression level of instance |
+| `task_label`          | instance  | attribute | Label of instance |
+| `get_result`          | instance  | method    | Get the result of the task (fails if the result is missing) |
+| `to_json`             | instance  | method    | Serialize itself as a JSON dictionary |
+| `get_workers`         | instance  | method    | Get the dictionary of the workers |
 
 
 ## TODO
@@ -290,5 +299,3 @@ Below is the list of the built-in properties/methods of `Task`. Do not override 
     - Pydantic/dataclass support in task arguments (as an incompatible, but better-UX object with TypedDict).
     - Dynamic prefix generation with prefix template (e.g., for specifying the log locations).
 - Remove `DiscCache` and use `shelve.
-- Use methods in TaskWorker directly.
-- TaskConfig should be accessible outside Cache context.

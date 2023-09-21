@@ -1,7 +1,7 @@
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 import pytest
-from taskproc import Task, Future, Const, Cache, FutureList, FutureDict
+from taskproc import Task, Future, Const, Graph, FutureList, FutureDict
 import time
 from taskproc.executors import LocalExecutor
 from taskproc.graph import FailedTaskError
@@ -10,17 +10,17 @@ from taskproc.graph import FailedTaskError
 class Choose(Task):
     def __init__(self, n: int, k: int):
         if 0 < k < n:
-            self.prev1 = Choose(n - 1, k - 1)
-            self.prev2 = Choose(n - 1, k)
+            self.left = Choose(n - 1, k - 1)
+            self.right = Choose(n - 1, k)
         else:
-            self.prev1 = Const(0)
-            self.prev2 = Const(1)
+            self.left = Const(0)
+            self.right = Const(1)
 
     def run_task(self) -> int:
-        return self.prev1.get_result() + self.prev2.get_result()
+        return self.left.get_result() + self.right.get_result()
 
 
-@Cache('./.cache/tests')
+@Graph('./.cache/tests')
 def test_graph():
     """ 15 caches:
      0123
@@ -60,16 +60,12 @@ def test_graph():
 
 class TaskA(Task):
     task_label = ['<mychan>', '<another_chan>']
-    def __init__(self): ...
-
     def run_task(self) -> str:
         return 'hello'
 
 
 class TaskB(Task):
     task_label = '<mychan>'
-    def __init__(self): ...
-    
     def run_task(self) -> str:
         return 'world'
 
@@ -85,14 +81,14 @@ class TaskC(Task):
         return f'{self.a.get_result()}, {self.b.get_result()}'
 
 
-@Cache('./.cache/tests')
+@Graph('./.cache/tests')
 def test_multiple_tasks():
     TaskA.clear_all_tasks()
     TaskB.clear_all_tasks()
     TaskC.clear_all_tasks()
     main = TaskC()
     assert main.run_graph(rate_limits={'<mychan>': 1})[0] == 'hello, world'
-    assert TaskB()._task_worker.labels == (TaskB.task_config.name, '<mychan>')
+    assert TaskB().task_worker.labels == (TaskB.task_name, '<mychan>')
     assert main.task_compress_level == 0
 
 
@@ -102,7 +98,7 @@ class TaskRaise(Task):
         raise ValueError(42)
 
 
-@Cache('./.cache/tests')
+@Graph('./.cache/tests')
 def test_raise():
     with pytest.raises(FailedTaskError):
         TaskRaise().run_graph()
@@ -128,7 +124,7 @@ class GreetWithFile(Task):
             return f.read()
 
 
-@Cache('./.cache/tests')
+@Graph('./.cache/tests')
 def test_requires_directory():
     CreateFile.clear_all_tasks()
     GreetWithFile.clear_all_tasks()
@@ -182,7 +178,7 @@ class SummarizeParam(Task):
         return out
 
 
-@Cache('./.cache/tests')
+@Graph('./.cache/tests')
 def test_json_param():
     res, _ = SummarizeParam(x=[1, 2], y=dict(zip(range(3), 'abc')), z=42).run_graph()
     assert res == {'x': 2, 'y': 3, 'z': None}
@@ -204,7 +200,7 @@ class DownstreamTask(Task):
         return self.up.get_result()
 
 
-@Cache('./.cache/tests')
+@Graph('./.cache/tests')
 def test_mapping():
     MultiResultTask.clear_all_tasks()
     DownstreamTask.clear_all_tasks()
@@ -218,7 +214,7 @@ class PrefixedJob(Task):
         return
 
 
-@Cache('./.cache/tests')
+@Graph('./.cache/tests')
 def test_prefix_command(capsys):
     PrefixedJob.clear_all_tasks()
     task = PrefixedJob()
@@ -227,11 +223,11 @@ def test_prefix_command(capsys):
     assert captured.out == ''
     assert captured.err == ''
 
-    assert open(task.task_stdout_caller, 'r').read() == 'hello\n'
-    assert open(task.task_stdout, 'r').read() == 'world\n'
+    assert open(task.task_worker.cache.stdout_path_caller, 'r').read() == 'hello\n'
+    assert open(task.task_worker.cache.stdout_path, 'r').read() == 'world\n'
 
 
-@Cache('./.cache/tests')
+@Graph('./.cache/tests')
 def test_prefix_command2(capsys):
     PrefixedJob.clear_all_tasks()
     task = PrefixedJob()
@@ -240,8 +236,8 @@ def test_prefix_command2(capsys):
     assert captured.out == ''
     assert captured.err == ''
 
-    assert open(task.task_stdout_caller, 'r').read() == ''
-    assert open(task.task_stdout, 'r').read() == 'world\n'
+    assert open(task.task_worker.cache.stdout_path_caller, 'r').read() == ''
+    assert open(task.task_worker.cache.stdout_path, 'r').read() == 'world\n'
 
 
 class SleepTask(Task):
@@ -254,7 +250,7 @@ class SleepTask(Task):
         return t + max(self.prevs.get_result(), default=0)
 
 
-@Cache('./.cache/tests')
+@Graph('./.cache/tests')
 def test_sleep_task():
     SleepTask.clear_all_tasks()
     task1 = SleepTask()
@@ -274,7 +270,7 @@ class InteractiveJob(Task):
         return
 
 
-@Cache('./.cache/tests')
+@Graph('./.cache/tests')
 def test_interactive(capsys):
     InteractiveJob.clear_all_tasks()
     task = InteractiveJob()
@@ -283,22 +279,22 @@ def test_interactive(capsys):
     assert captured.out == 'world\n'
     assert captured.err == ''
 
-    assert not task.task_stdout.exists()
-    assert not task.task_stderr.exists()
+    assert not task.task_worker.cache.stdout_path.exists()
+    assert not task.task_worker.cache.stderr_path.exists()
 
 
 def test_context():
-    with Cache('./.cache/tests/1'):
+    with Graph('./.cache/tests/1'):
         Choose(3, 2).run_graph()
 
-    with Cache('./.cache/tests/2'):
+    with Graph('./.cache/tests/2'):
         Choose.clear_all_tasks()
 
-    with Cache('./.cache/tests/1'):
-        assert Choose(3, 2)._task_worker.peek_timestamp() is not None
+    with Graph('./.cache/tests/1'):
+        assert Choose(3, 2).task_worker.peek_timestamp() is not None
 
     with pytest.raises(RuntimeError):
          Choose(3, 2)
 
-    with Cache('./.cache/tests/1'):
+    with Graph('./.cache/tests/1'):
         Choose.clear_all_tasks()

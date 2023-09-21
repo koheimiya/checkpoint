@@ -3,7 +3,7 @@ import __main__
 from collections.abc import Iterable
 from contextlib import ContextDecorator, redirect_stderr, redirect_stdout, ExitStack, AbstractContextManager
 from dataclasses import asdict, dataclass
-from typing import Callable, ClassVar, Concatenate, Generic, Literal, Self, Sequence, Type, TypeVar, Any, cast
+from typing import Callable, ClassVar, Concatenate, Generic, Literal, Self, Sequence, Type, TypeVar, Any, cast, final
 from typing_extensions import ParamSpec, Protocol
 from datetime import datetime
 from pathlib import Path
@@ -25,7 +25,7 @@ import inspect
 from .types import JsonStr, TaskKey, JsonDict
 from .future import Future, FutureJSONEncoder, FutureMapperMixin
 from .database import Database
-from .graph import TaskGraph, TaskHandlerProtocol, run_task_graph
+from .graph import TaskGraph, TaskWorkerProtocol, run_task_graph
 from .executors import LocalExecutor
 
 
@@ -40,10 +40,10 @@ P = ParamSpec('P')
 R = TypeVar('R', covariant=True)
 
 
-class Cache(ContextDecorator, AbstractContextManager):
+class Graph(ContextDecorator, AbstractContextManager):
     _ENABLED: bool = False
     CACHE_DIR: Path = Path.cwd() / '.cache'
-    TASK_CONFIG_HISTORY: list[TaskConfig[Any]] = []
+    CONFIG_REGISTRY: dict[Type[Task[Any]], TaskConfig[Any]] = {}
 
     def __init__(self, cache_dir: Path | str):
         self.cache_dir = Path(cache_dir).resolve()
@@ -54,18 +54,18 @@ class Cache(ContextDecorator, AbstractContextManager):
         cls._ENABLED = True
         self.orig = cls.CACHE_DIR
         cls.CACHE_DIR = self.cache_dir
-        cls.TASK_CONFIG_HISTORY.clear()
+        cls.CONFIG_REGISTRY.clear()
 
     def __exit__(self, __exc_type: type[BaseException] | None, __exc_value: BaseException | None, __traceback: Any) -> bool | None:
         cls = type(self)
         assert cls._ENABLED
         cls._ENABLED = False
-        cls.TASK_CONFIG_HISTORY.clear()
+        cls.CONFIG_REGISTRY.clear()
         cls.CACHE_DIR = self.orig
 
 
 class TaskConfig(Generic[R]):
-    """ Information specific to a task class (not instance) """
+    """ Information specific to a task class of a graph (not instance) """
     def __init__(
             self,
             task_class: Type[Task[R]],
@@ -74,12 +74,11 @@ class TaskConfig(Generic[R]):
 
         self.task_class = task_class
         self.cache_dir = cache_dir
-        self.name = _serialize_function(task_class)
         self.worker_registry: dict[JsonStr, TaskWorker[R]] = {}
 
     @cached_property
     def db(self) -> Database[R]:
-        return Database.make(cache_path=self.cache_dir, name=self.name)
+        return Database.make(cache_path=self.cache_dir, name=self.task_class.task_name)
 
     @cached_property
     def source_timestamp(self) -> datetime:
@@ -97,9 +96,9 @@ class TaskWorker(Generic[R]):
         self.instance = instance
         self.arg_key = arg_key
 
-        self.dirobj = config.db.get_instance_dir(
+        self.cache = config.db.get_instance_dir(
                 key=arg_key,
-                deps={k: w.dirobj.path for k, w in self.get_prerequisites().items()},
+                deps={k: w.cache.path for k, w in self.get_prerequisites().items()},
                 )
 
     @property
@@ -119,8 +118,12 @@ class TaskWorker(Generic[R]):
     def source_timestamp(self) -> datetime:
         return self.config.source_timestamp
 
+    @property
+    def directory(self) -> Path:
+        return self.cache.path
+
     def to_tuple(self) -> TaskKey:
-        return (self.config.name, self.arg_key)
+        return (self.instance.task_name, self.arg_key)
 
     def get_prerequisites(self) -> dict[str, TaskWorker[Any]]:
         inst = self.instance
@@ -135,14 +138,14 @@ class TaskWorker(Generic[R]):
     def peek_timestamp(self) -> datetime | None:
         try:
             # return self.config.db.load_timestamp(self.arg_key)
-            return self.dirobj.get_timestamp()
+            return self.cache.get_timestamp()
         except RuntimeError:
             return None
 
     def dump_error_msg(self) -> str:
         task_info = {
-                'name': self.config.name,
-                'id': self.task_id,
+                'name': self.instance.task_name,
+                'id': self.cache.task_id,
                 }
         msg = ''
         def add_msgline(s: str, prompt = 'LOG > ', end='\n'):
@@ -175,14 +178,14 @@ class TaskWorker(Generic[R]):
                         add_msgline(line, prompt=prompt, end='')
 
         add_msgline(f'Error occurred while running detached task {task_info}', prompt='')
-        add_msgline(f'Here is the detached caller\'s stdout ({self.stdout_path_caller}):')
-        peek_file(self.stdout_path_caller)
-        add_msgline(f'Here is the detached callee\'s stdout ({self.stdout_path}):')
-        peek_file(self.stdout_path)
-        add_msgline(f'Here is the detached caller\'s stderr ({self.stderr_path_caller}):')
-        peek_file(self.stderr_path_caller)
-        add_msgline(f'Here is the detached callee\'s stderr ({self.stderr_path}):')
-        peek_file(self.stderr_path)
+        add_msgline(f'Here is the detached caller\'s stdout ({self.cache.stdout_path_caller}):')
+        peek_file(self.cache.stdout_path_caller)
+        add_msgline(f'Here is the detached callee\'s stdout ({self.cache.stdout_path}):')
+        peek_file(self.cache.stdout_path)
+        add_msgline(f'Here is the detached caller\'s stderr ({self.cache.stderr_path_caller}):')
+        peek_file(self.cache.stderr_path_caller)
+        add_msgline(f'Here is the detached callee\'s stderr ({self.cache.stderr_path}):')
+        peek_file(self.cache.stderr_path)
         add_msgline(f'For more details, see {str(self.directory)}')
         return msg
 
@@ -190,7 +193,7 @@ class TaskWorker(Generic[R]):
         if prefix_command is None:
             prefix_command = ''
 
-        self.dirobj.initialize()
+        self.cache.initialize()
 
         execute_locally = (on_child_process and prefix_command == '') or interactive
         if execute_locally:
@@ -200,7 +203,7 @@ class TaskWorker(Generic[R]):
                 res = self.instance.run_task()
             else:
                 res = self.run_instance_task_with_captured_output()
-            self.dirobj.save_result(res, compress_level=self.instance.task_compress_level)
+            self.cache.save_result(res, compress_level=self.instance.task_compress_level)
         else:
             dir_ref = self.directory / 'tmp'
             if dir_ref.exists():
@@ -212,7 +215,7 @@ class TaskWorker(Generic[R]):
                 with open(worker_path, 'wb') as worker_ref:
                     cloudpickle.dump(self, worker_ref)
 
-                pycmd = f'from taskproc.task import _run_worker as f; f("{worker_path}")'
+                pycmd = f'from taskproc.task import TaskWorker; TaskWorker.run_from_path("{worker_path}")'
                 shell_command = ' '.join([prefix_command, sys.executable, '-c', repr(pycmd)])
                 res = subprocess.run(
                         shell_command,
@@ -220,9 +223,9 @@ class TaskWorker(Generic[R]):
                         capture_output=True,
                         env=os.environ,
                         )
-                with open(self.stdout_path_caller, 'w') as f:
+                with open(self.cache.stdout_path_caller, 'w') as f:
                     f.write(res.stdout)
-                with open(self.stderr_path_caller, 'w') as f:
+                with open(self.cache.stderr_path_caller, 'w') as f:
                     f.write(res.stderr)
                 res.check_returncode()
             finally:
@@ -230,8 +233,8 @@ class TaskWorker(Generic[R]):
 
     def run_instance_task_with_captured_output(self) -> R:
         with ExitStack() as stack:
-            stdout = stack.enter_context(open(self.stdout_path, 'w+'))
-            stderr = stack.enter_context(open(self.stderr_path, 'w+'))
+            stdout = stack.enter_context(open(self.cache.stdout_path, 'w+'))
+            stderr = stack.enter_context(open(self.cache.stderr_path, 'w+'))
             stack.enter_context(redirect_stdout(stdout))
             stack.callback(lambda: stdout.flush())
             stack.enter_context(redirect_stderr(stderr))
@@ -240,47 +243,25 @@ class TaskWorker(Generic[R]):
         raise NotImplementedError('Should not happen')
 
     @property
-    def task_id(self) -> int:
-        return self.dirobj.task_id
-
-    @property
-    def task_args(self) -> dict[str, Any]:
-        return json.loads(self.arg_key)
-
-    @property
-    def stdout_path(self) -> Path:
-        return self.dirobj.stdout_path
-
-    @property
-    def stderr_path(self) -> Path:
-        return self.dirobj.stderr_path
-
-    @property
-    def stdout_path_caller(self) -> Path:
-        return self.dirobj.stdout_path_caller
-
-    @property
-    def stderr_path_caller(self) -> Path:
-        return self.dirobj.stderr_path_caller
-
-    @property
-    def directory(self) -> Path:
-        return self.dirobj.path
-
-    @property
     def data_directory(self) -> Path:
-        return self.dirobj.data_dir
+        return self.cache.data_dir
 
     def get_result(self) -> R:
         result_key = '_task__result_'
         res = getattr(self.instance, result_key, None)
         if res is None:
-            res = self.dirobj.load_result()
+            res = self.cache.load_result()
             setattr(self.instance, result_key, res)
         return res
 
     def clear(self) -> None:
-        self.dirobj.delete()
+        self.cache.delete()
+
+    @staticmethod
+    def run_from_path(path: Path):
+        worker: TaskWorker[Any] = cloudpickle.load(open(path, "rb"))
+        res = worker.run_instance_task_with_captured_output()
+        worker.cache.save_result(res, worker.instance.task_compress_level)
 
 
 class PartiallyTypedTask(Protocol[R]):
@@ -290,35 +271,30 @@ class PartiallyTypedTask(Protocol[R]):
 
 def wrap_task_init(init_method: Callable[Concatenate[Task[R], P], None]) -> Callable[Concatenate[Task[R], P], None]:
     def wrapped_init(self: Task, *args: P.args, **kwargs: P.kwargs) -> None:
-        config = self.task_config
+        config = self.get_task_config()
         arg_key = _serialize_arguments(self.__init__, *args, **kwargs)
         worker = config.worker_registry.get(arg_key, None)
         # Reuse registered if exists
         if worker is not None:
-            self._task_worker = worker
+            self.task_worker = worker
             return
 
         # Initialize instance
         init_method(self, *args, **kwargs)
         worker = TaskWorker[R](config=config, instance=self, arg_key=arg_key)
         config.worker_registry[arg_key] = worker
-        self._task_worker = worker
+        self.task_config = config
+        self.task_worker = worker
         return 
     return wrapped_init
 
 
 class Task(FutureMapperMixin, Generic[R]):
     __init_orig__: Any
-    _task_config: TaskConfig[R]
-    _task_worker: TaskWorker[R]
+    task_config: TaskConfig[R]
+    task_worker: TaskWorker[R]
     task_compress_level: int = 9
     task_label: str | Sequence[str] = tuple()
-
-    def __init__(self) -> None:
-        ...
-
-    def run_task(self) -> R:
-        ...
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
         # Wrap initializer to make __init__ lazy
@@ -326,63 +302,45 @@ class Task(FutureMapperMixin, Generic[R]):
         cls.__init__ = wrap_task_init(cls.__init__)  # type: ignore
         super().__init_subclass__(**kwargs)
 
-    @classmethod
-    @property
-    def task_config(cls) -> TaskConfig[R]:
-        if not Cache._ENABLED:
-            raise RuntimeError(f'{Cache} must be enabled to access `task_config`')
+    def __init__(self) -> None:
+        ...
 
-        config = getattr(cls, '_task_config', None)
-        if config is not None and config in Cache.TASK_CONFIG_HISTORY:
-            return config
+    def run_task(self) -> R:
+        ...
+
+    def get_result(self: PartiallyTypedTask[T]) -> T:
+        return cast(Task, self).task_worker.get_result()
+
+    def to_json(self) -> JsonDict:
+        name, keys = self.task_worker.to_tuple()
+        return JsonDict({'__task__': name, '__args__': json.loads(keys)})
+
+    def get_workers(self) -> dict[str, TaskWorkerProtocol]:
+        return {'self': self.task_worker}
+
+    @classmethod
+    def get_task_config(cls) -> TaskConfig[R]:
+        if not Graph._ENABLED:
+            raise RuntimeError(f'{Graph} must be enabled to get a task config.')
+
+        if cls in Graph.CONFIG_REGISTRY:
+            return Graph.CONFIG_REGISTRY[cls]
 
         config = TaskConfig(
                 task_class=cls,
-                cache_dir=Cache.CACHE_DIR,
+                cache_dir=Graph.CACHE_DIR,
                 )
-        Cache.TASK_CONFIG_HISTORY.append(config)
-        cls._task_config = config
+        Graph.CONFIG_REGISTRY[cls] = config
         return config
 
     @classmethod
     @property
     def task_name(cls) -> str:
-        return cls.task_config.name
+        return _get_object_full_name(cls)
 
     @property
     def task_directory(self) -> Path:
-        return self._task_worker.data_directory
-
-    @property
-    def task_id(self) -> int:
-        return self._task_worker.task_id
-
-    @property
-    def task_args(self) -> dict[str, Any]:
-        return self._task_worker.task_args
-
-    @property
-    def task_stdout(self) -> Path:
-        return self._task_worker.stdout_path
-
-    @property
-    def task_stderr(self) -> Path:
-        return self._task_worker.stderr_path
-
-    @property
-    def task_stdout_caller(self) -> Path:
-        return self._task_worker.stdout_path_caller
-
-    @property
-    def task_stderr_caller(self) -> Path:
-        return self._task_worker.stderr_path_caller
-
-    @classmethod
-    def clear_all_tasks(cls) -> None:
-        cls.task_config.clear_all()
-
-    def clear_task(self) -> None:
-        self._task_worker.clear()
+        return self.task_worker.data_directory
 
     def run_graph(
             self: PartiallyTypedTask[T], *,
@@ -394,7 +352,7 @@ class Task(FutureMapperMixin, Generic[R]):
             prefixes: dict[str, str] | None = None,
             ) -> tuple[T, dict[str, Any]]:
         self = cast(Task, self)
-        graph = TaskGraph.build_from(self._task_worker, detect_source_change=detect_source_change)
+        graph = TaskGraph.build_from(self.task_worker, detect_source_change=detect_source_change)
 
         if executor is None:
             executor = ProcessPoolExecutor()
@@ -407,7 +365,7 @@ class Task(FutureMapperMixin, Generic[R]):
                 show_progress=show_progress,
                 prefixes=prefixes,
                 )
-        return self._task_worker.get_result(), stats
+        return self.task_worker.get_result(), stats
 
     @classmethod
     def cli(cls, args: Sequence[str] | None = None, defaults: CLIDefaultArguments | None = None) -> None:
@@ -415,18 +373,15 @@ class Task(FutureMapperMixin, Generic[R]):
             defaults = CLIDefaultArguments.get_default()
         _run_with_argparse(cls, args=args, defaults=defaults)
 
-    def get_result(self: PartiallyTypedTask[T]) -> T:
-        return cast(Task, self)._task_worker.get_result()
+    @classmethod
+    def clear_all_tasks(cls) -> None:
+        cls.get_task_config().clear_all()
 
-    def to_json(self) -> JsonDict:
-        name, keys = self._task_worker.to_tuple()
-        return JsonDict({'__task__': name, '__args__': json.loads(keys)})
-
-    def get_workers(self) -> dict[str, TaskHandlerProtocol]:
-        return {'self': self._task_worker}
+    def clear_task(self) -> None:
+        self.task_worker.clear()
 
 
-def _serialize_function(fn: Callable[..., Any]) -> str:
+def _get_object_full_name(fn: Callable[..., Any]) -> str:
     return f'{fn.__module__}.{fn.__qualname__}'
 
 
@@ -489,7 +444,7 @@ def _run_with_argparse(
     LOGGER.info('Parsing args from CLI.')
     LOGGER.info(f'Params: {params}')
 
-    with Cache(cache_dir=params.output):
+    with Graph(cache_dir=params.output):
         task_instance = task_class(**(params.kwargs if params.kwargs is not None else {}))
         if not params.dont_force_entrypoint:
             task_instance.clear_task()
@@ -507,15 +462,15 @@ def _run_with_argparse(
 
     LOGGER.debug(f"stats:\n{stats}")
 
-    if task_instance.task_stdout.exists():
+    if task_instance.task_worker.cache.stdout_path.exists():
         print("==== ENTRYPOINT STDOUT (DETACHED) ====")
-        print(open(task_instance.task_stdout).read())
+        print(open(task_instance.task_worker.cache.stdout_path).read())
     else:
         print("==== NO ENTRYPOINT STDOUT (DETACHED) ====")
 
-    if task_instance.task_stderr.exists():
+    if task_instance.task_worker.cache.stderr_path.exists():
         print("==== ENTRYPOINT STDERR (DETACHED) ====")
-        print(open(task_instance.task_stderr).read())
+        print(open(task_instance.task_worker.cache.stderr_path).read())
     else:
         print("==== NO ENTRYPOINT STDERR (DETACHED) ====")
 
@@ -530,9 +485,3 @@ def _get_executor(executor_name: Literal['process', 'thread', 'local'] | str, ma
     else:
         raise ValueError('Unrecognized executor name:', executor_name)
     return executor_type(max_workers=max_workers)
-
-
-def _run_worker(worker_path: Path):
-    worker = cloudpickle.load(open(worker_path, "rb"))
-    res = worker.run_instance_task_with_captured_output()
-    worker.dirobj.save_result(res, worker.instance.task_compress_level)

@@ -6,7 +6,7 @@ from dataclasses import dataclass
 import json
 
 from .types import JsonDict
-from .graph import TaskHandlerProtocol
+from .graph import TaskWorkerProtocol
 
 
 K = TypeVar('K', int, float, str, bool, None)
@@ -23,7 +23,7 @@ class Future(Protocol[R]):
     def to_json(self) -> JsonDict:
         ...
 
-    def get_workers(self) -> dict[str, TaskHandlerProtocol]:
+    def get_workers(self) -> dict[str, TaskWorkerProtocol]:
         ...
 
 
@@ -79,7 +79,7 @@ class MappedFuture(FutureMapperMixin, Generic[R]):
             })
         return out
 
-    def get_workers(self) -> dict[str, TaskHandlerProtocol]:
+    def get_workers(self) -> dict[str, TaskWorkerProtocol]:
         return self.get_origin().get_workers()
 
 
@@ -96,7 +96,7 @@ class Const(FutureMapperMixin, Generic[R]):
     def to_json(self) -> JsonDict:
         return JsonDict({'__future__': 'Const', '__value__': repr(self.value)})
 
-    def get_workers(self) -> dict[str, TaskHandlerProtocol]:
+    def get_workers(self) -> dict[str, TaskWorkerProtocol]:
         return {}
 
 
@@ -115,7 +115,7 @@ class FutureDict(UserDict[K, Future[T]]):
     def to_json(self) -> JsonDict:
         return JsonDict({'__future__': 'FutureDict', '__value__': {k: v.to_json() for k, v in self.items()}})
 
-    def get_workers(self) -> dict[str, TaskHandlerProtocol]:
+    def get_workers(self) -> dict[str, TaskWorkerProtocol]:
         return {f'{k}.{kk}': vv for k, v in self.items() for kk, vv in v.get_workers().items()}
 
 
@@ -126,7 +126,7 @@ class FutureList(UserList[Future[T]]):
     def to_json(self) -> JsonDict:
         return JsonDict({'__future__': 'FutureList', '__value__': [v.to_json() for v in self]})
 
-    def get_workers(self) -> dict[str, TaskHandlerProtocol]:
+    def get_workers(self) -> dict[str, TaskWorkerProtocol]:
         return {f'{i}.{kk}': vv for i, v in enumerate(self) for kk, vv in v.get_workers().items()}
 
 
