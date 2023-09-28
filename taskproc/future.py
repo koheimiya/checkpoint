@@ -23,7 +23,7 @@ class Future(Protocol[R]):
     def to_json(self) -> JsonDict:
         ...
 
-    def get_workers(self) -> dict[str, TaskWorkerProtocol]:
+    def get_workers(self, prefix: str) -> dict[str, TaskWorkerProtocol]:
         ...
 
 
@@ -79,8 +79,8 @@ class MappedFuture(FutureMapperMixin, Generic[R]):
             })
         return out
 
-    def get_workers(self) -> dict[str, TaskWorkerProtocol]:
-        return self.get_origin().get_workers()
+    def get_workers(self, prefix: str) -> dict[str, TaskWorkerProtocol]:
+        return self.get_origin().get_workers(prefix)
 
 
 @dataclass(frozen=True)
@@ -96,7 +96,7 @@ class Const(FutureMapperMixin, Generic[R]):
     def to_json(self) -> JsonDict:
         return JsonDict({'__future__': 'Const', '__value__': repr(self.value)})
 
-    def get_workers(self) -> dict[str, TaskWorkerProtocol]:
+    def get_workers(self, prefix: str) -> dict[str, TaskWorkerProtocol]:
         return {}
 
 
@@ -115,9 +115,9 @@ class FutureDict(UserDict[K, Future[T]]):
     def to_json(self) -> JsonDict:
         return JsonDict({'__future__': 'FutureDict', '__value__': {k: v.to_json() for k, v in self.items()}})
 
-    def get_workers(self) -> dict[str, TaskWorkerProtocol]:
-        assert all('/' not in f'{k}' for k in self), 'Future key must not contains "/".'
-        return {f'{k}.{kk}': vv for k, v in self.items() for kk, vv in v.get_workers().items()}
+    def get_workers(self, prefix: str) -> dict[str, TaskWorkerProtocol]:
+        assert all('/' not in f'{k}' for k in self), 'Future key must not contain "/".'
+        return {kk: vv for k, v in self.items() for kk, vv in v.get_workers(prefix=f'{prefix}.{k}').items()}
 
 
 class FutureList(UserList[Future[T]]):
@@ -127,7 +127,7 @@ class FutureList(UserList[Future[T]]):
     def to_json(self) -> JsonDict:
         return JsonDict({'__future__': 'FutureList', '__value__': [v.to_json() for v in self]})
 
-    def get_workers(self) -> dict[str, TaskWorkerProtocol]:
-        return {f'{i}.{kk}': vv for i, v in enumerate(self) for kk, vv in v.get_workers().items()}
+    def get_workers(self, prefix: str) -> dict[str, TaskWorkerProtocol]:
+        return {kk: vv for i, v in enumerate(self) for kk, vv in v.get_workers(f'{prefix}.{i}').items()}
 
 

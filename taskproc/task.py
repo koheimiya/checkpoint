@@ -130,9 +130,9 @@ class TaskWorker(Generic[R]):
         prerequisites: dict[str, TaskWorker] = {}
         for name, f in inst.__dict__.items():
             if isinstance(f, Future):
-                for k, worker in f.get_workers().items():
+                for k, worker in f.get_workers(prefix=name).items():
                     assert isinstance(worker, TaskWorker)
-                    prerequisites[f'{name}.{k}'] = worker
+                    prerequisites[k] = worker
         return prerequisites
 
     def peek_timestamp(self) -> datetime | None:
@@ -311,8 +311,8 @@ class Task(FutureMapperMixin, Generic[R]):
         name, keys = self.task_worker.to_tuple()
         return JsonDict({'__task__': name, '__args__': json.loads(keys)})
 
-    def get_workers(self) -> dict[str, TaskWorkerProtocol]:
-        return {'self': self.task_worker}
+    def get_workers(self, prefix: str) -> dict[str, TaskWorkerProtocol]:
+        return {prefix: self.task_worker}
 
     @classmethod
     def get_task_config(cls) -> TaskConfig[R]:
