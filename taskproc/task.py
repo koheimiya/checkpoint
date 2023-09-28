@@ -224,7 +224,6 @@ class TaskWorker(Generic[R]):
                                 shell=True, text=True,
                                 stdout=fout,
                                 stderr=ferr,
-                                # capture_output=True,
                                 env=os.environ,
                                 )
                 res.check_returncode()

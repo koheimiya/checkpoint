@@ -291,6 +291,21 @@ Below is the list of the built-in attributes/properties/methods of `Task`. Do no
 | `get_workers`         | instance  | method    | Get the dictionary of the workers |
 
 
+#### Browsing caches
+Show the whole task dependency tree:
+```bash
+tree -l /<path_to_cache_directory>/<task_name>/results/<root_task_id>
+```
+Show finished tasks only:
+```bash
+tree -l -P result.pkl.gz --prune /<path_to_cache_directory>/<task_name>/results/<root_task_id>
+```
+Show finished tasks + running tasks:
+```bash
+tree -l -P *.txt --prune /<path_to_cache_directory>/<task_name>/results/<root_task_id>
+```
+
+
 ## TODO
 - Known issue
     - Current task argument serialization is not ideal since JSON is mapping two different values into the same text representation (e.g., tuple and list). Consider using consistency check `x == json.loads(json.dumps(x))`, or redesign the format.
