@@ -116,6 +116,7 @@ class FutureDict(UserDict[K, Future[T]]):
         return JsonDict({'__future__': 'FutureDict', '__value__': {k: v.to_json() for k, v in self.items()}})
 
     def get_workers(self) -> dict[str, TaskWorkerProtocol]:
+        assert all('/' not in f'{k}' for k in self), 'Future key must not contains "/".'
         return {f'{k}.{kk}': vv for k, v in self.items() for kk, vv in v.get_workers().items()}
 
 
