@@ -154,7 +154,7 @@ class TaskWorker(Generic[R]):
 
         def peek_file(path: Path, name: str):
             if not path.exists():
-                add_msgline(f'NO {name} ({path})')
+                add_msgline(f'(NO {name})')
                 return
 
             add_msgline(f'Here is {name} ({path}):')
@@ -180,8 +180,8 @@ class TaskWorker(Generic[R]):
 
         add_msgline(f'Error occurred while running detached task {task_info}', prompt='')
         peek_file(self.cache.stdout_path_caller, name='shell stdout')
-        peek_file(self.cache.stdout_path, name='detached stdout')
         peek_file(self.cache.stderr_path_caller, name='shell stderr')
+        peek_file(self.cache.stdout_path, name='detached stdout')
         peek_file(self.cache.stderr_path, name='detached stderr')
         add_msgline(f'For more details, see {str(self.directory)}')
         return msg
