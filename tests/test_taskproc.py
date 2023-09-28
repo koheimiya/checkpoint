@@ -211,14 +211,15 @@ class PrefixedJob(Task):
     task_label = 'mychan'
     def run_task(self) -> None:
         print('world')
-        return
+        raise RuntimeError()
 
 
 @Graph('./.cache/tests')
 def test_prefix_command(capsys):
     PrefixedJob.clear_all_tasks()
     task = PrefixedJob()
-    task.run_graph(executor=ThreadPoolExecutor(), prefixes={PrefixedJob.task_name: 'bash tests/run_with_hello.bash'})
+    with pytest.raises(FailedTaskError):
+        task.run_graph(executor=ThreadPoolExecutor(), prefixes={PrefixedJob.task_name: 'bash tests/run_with_hello.bash'})
     captured = capsys.readouterr()
     assert captured.out == ''
     assert captured.err == ''
@@ -231,7 +232,8 @@ def test_prefix_command(capsys):
 def test_prefix_command2(capsys):
     PrefixedJob.clear_all_tasks()
     task = PrefixedJob()
-    task.run_graph(executor=ThreadPoolExecutor(), prefixes={'mychan': ''})
+    with pytest.raises(FailedTaskError):
+        task.run_graph(executor=ThreadPoolExecutor(), prefixes={'mychan': ''})
     captured = capsys.readouterr()
     assert captured.out == ''
     assert captured.err == ''
