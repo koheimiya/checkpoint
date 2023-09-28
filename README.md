@@ -293,7 +293,6 @@ Below is the list of the built-in attributes/properties/methods of `Task`. Do no
 
 ## TODO
 - Known issue
-    - Cannot use '/' in FutureDict
     - Current task argument serialization is not ideal since JSON is mapping two different values into the same text representation (e.g., tuple and list). Consider using consistency check `x == json.loads(json.dumps(x))`, or redesign the format.
 
 - Feature enhancement
@@ -301,6 +300,3 @@ Below is the list of the built-in attributes/properties/methods of `Task`. Do no
     - Simple task graph visualizer.
     - Pydantic/dataclass support in task arguments (as an incompatible, but better-UX object with TypedDict).
     - Dynamic prefix generation with prefix template (e.g., for specifying the log locations).
-
-- Refactoring
-    - Remove `DiscCache` and use `shelve.

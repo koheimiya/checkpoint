@@ -1,14 +1,16 @@
 from __future__ import annotations
-from typing import Callable, Generic, TypeVar, Any
+from contextlib import contextmanager
+from typing import Callable, Generic, Iterator, TypeVar, Any
 from typing_extensions import Self
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 import shutil
 import gzip
+import shelve
+from shelve import Shelf
 
 import cloudpickle
-import diskcache as dc
 
 from .types import JsonStr
 
@@ -179,35 +181,37 @@ class InstanceDirectory(Generic[T]):
 @dataclass
 class IdTable:
     def __init__(self, path: Path | str) -> None:
-        self.path = path
+        self.path = Path(path)
         self.cache: dict[Any, int] = {}
 
-    @property
-    def table(self) -> dc.Cache:
-        return dc.Cache(directory=self.path)
+    @contextmanager
+    def _connect_shelf(self) -> Iterator[Shelf[int]]:
+        if not self.path.parent.exists():
+            self.path.parent.mkdir(parents=True)
+        with shelve.open(str(self.path), writeback=True) as shelf:
+            yield shelf
     
-    def get(self, x: Any) -> int:
+    def get(self, x: str) -> int:
         out = self.cache.get(x)
         if out is not None:
             return out
 
-        table = self.table
-        with table.transact():
-            value = table.get(key=x)
+        with self._connect_shelf() as s:
+            value = s.get(x)
             if value is None:
-                value = len(table)
-                table.set(key=x, value=value)
+                value = len(s)
+                s[x] = value
 
         self.cache[x] = value
         return value
 
-    def __contains__(self, key: Any) -> bool:
-        return key in self.table
+    def __contains__(self, key: str) -> bool:
+        with self._connect_shelf() as s:
+            return key in s
 
     def list_keys(self) -> list[str]:
-        table = self.table
-        with table.transact():
-            return list(map(str, table))
+        with self._connect_shelf() as s:
+            return list(map(str, s))
 
     def clear(self) -> None:
-        self.table.clear()
+        self.path.unlink()
