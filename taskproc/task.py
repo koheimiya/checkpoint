@@ -217,16 +217,16 @@ class TaskWorker(Generic[R]):
 
                 pycmd = f'from taskproc.task import TaskWorker; TaskWorker.run_from_path("{worker_path}")'
                 shell_command = ' '.join([prefix_command, sys.executable, '-c', repr(pycmd)])
-                res = subprocess.run(
-                        shell_command,
-                        shell=True, text=True,
-                        capture_output=True,
-                        env=os.environ,
-                        )
-                with open(self.cache.stdout_path_caller, 'w') as f:
-                    f.write(res.stdout)
-                with open(self.cache.stderr_path_caller, 'w') as f:
-                    f.write(res.stderr)
+                with open(self.cache.stdout_path_caller, 'w') as fout:
+                    with open(self.cache.stderr_path_caller, 'w') as ferr:
+                        res = subprocess.run(
+                                shell_command,
+                                shell=True, text=True,
+                                stdout=fout,
+                                stderr=ferr,
+                                # capture_output=True,
+                                env=os.environ,
+                                )
                 res.check_returncode()
             finally:
                 shutil.rmtree(dir_ref)
