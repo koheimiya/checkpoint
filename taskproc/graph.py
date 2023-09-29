@@ -1,10 +1,11 @@
 """ DAG processor """
 from __future__ import annotations
+from exceptiongroup import ExceptionGroup
 from contextlib import ExitStack
 from datetime import datetime
 from typing import Any, Mapping
 from typing_extensions import Self, runtime_checkable, Protocol
-from collections import defaultdict
+from collections import defaultdict, Counter
 from dataclasses import dataclass
 from concurrent.futures import Future, ProcessPoolExecutor, wait, FIRST_COMPLETED, Executor
 from pathlib import Path
@@ -170,6 +171,7 @@ def run_task_graph(
     # Execute tasks
     standby = graph.get_initial_tasks()
     in_process: dict[Future[tuple[TaskLabels, TaskKey]], TaskKey] = dict()
+    exceptions: list[FailedTaskError] = []
 
     with ExitStack() as stack:
         for pbar in progressbars.values():
@@ -220,9 +222,16 @@ def run_task_graph(
             # Update graph
             standby = defaultdict(list, leftover)
             for done_future in done:
-                queue_done, x_done = try_getting_result(done_future, task_key=in_process[done_future], graph=graph)
+                try:
+                    queue_done, x_done = try_getting_result(
+                            done_future,
+                            task_key=in_process.pop(done_future),
+                            graph=graph
+                            )
+                except FailedTaskError as e:
+                    exceptions.append(e)
+                    continue
 
-                del in_process[done_future]
                 if show_progress:
                     progressbars[x_done[0]].update()
 
@@ -239,6 +248,8 @@ def run_task_graph(
                 for channels, task in ys.items():
                     standby[channels].extend(task)
 
+    if exceptions:
+        raise generate_task_group(exceptions)
     # Sanity check
     assert graph.size == 0, f'Graph is not empty. Should not happen.'
     assert all(n == 0 for n in occupied.values()), 'Incorrect task count. Should not happen.'
@@ -249,6 +260,22 @@ class FailedTaskError(Exception):
     def __init__(self, task: TaskWorkerProtocol, msg: str):
         super().__init__(msg)
         self.task = task
+        self.msg = msg
+
+
+def generate_task_group(errors: list[FailedTaskError]) -> ExceptionGroup:
+    error_count = dict(Counter([e.task.to_tuple()[0] for e in errors]))
+    task_groups: dict[str, list[FailedTaskError]] = defaultdict(list)
+    for e in errors:
+        k = e.task.to_tuple()[0]
+        task_groups[k].append(e)
+
+    exception_groups = {k: ExceptionGroup(f'{len(v)} task(s) failed in {k}', v) for k, v in task_groups.items()}
+    out = ExceptionGroup(
+            f'Failed task count: {error_count}',
+            list(exception_groups.values())
+            )
+    return out
 
 
 def try_getting_result(future: Future[tuple[TaskLabels, TaskKey]], task_key: TaskKey, graph: TaskGraph) -> tuple[TaskLabels, TaskKey]:

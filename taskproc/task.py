@@ -3,7 +3,7 @@ import __main__
 from collections.abc import Iterable
 from contextlib import ContextDecorator, redirect_stderr, redirect_stdout, ExitStack, AbstractContextManager
 from dataclasses import asdict, dataclass
-from typing import Callable, ClassVar, Concatenate, Generic, Literal, Sequence, Type, TypeVar, Any, cast, final
+from typing import Callable, ClassVar, Concatenate, Generic, Literal, Sequence, Type, TypeVar, Any, cast
 from typing_extensions import ParamSpec, Protocol, Self
 from datetime import datetime
 from pathlib import Path
@@ -152,9 +152,10 @@ class TaskWorker(Generic[R]):
             nonlocal msg
             msg += prompt + s + end
 
-        def peek_file(path: Path, name: str):
+        def peek_file(path: Path, name: str, warn_missing_file: bool):
             if not path.exists():
-                add_msgline(f'(NO {name})')
+                if warn_missing_file:
+                    add_msgline(f'(NO {name})')
                 return
 
             add_msgline(f'Here is {name} ({path}):')
@@ -178,11 +179,11 @@ class TaskWorker(Generic[R]):
                         prompt = ('{:0'+str(digits)+'d} |').format(i)
                         add_msgline(line, prompt=prompt, end='')
 
-        add_msgline(f'Error occurred while running detached task {task_info}', prompt='')
-        peek_file(self.cache.stdout_path_caller, name='shell stdout')
-        peek_file(self.cache.stderr_path_caller, name='shell stderr')
-        peek_file(self.cache.stdout_path, name='detached stdout')
-        peek_file(self.cache.stderr_path, name='detached stderr')
+        add_msgline(f'>>> Error occurred while running detached task {task_info} <<<', prompt='')
+        peek_file(self.cache.stdout_path_caller, name='shell stdout', warn_missing_file=False)
+        peek_file(self.cache.stderr_path_caller, name='shell stderr', warn_missing_file=False)
+        peek_file(self.cache.stdout_path, name='detached stdout', warn_missing_file=True)
+        peek_file(self.cache.stderr_path, name='detached stderr', warn_missing_file=True)
         add_msgline(f'For more details, see {str(self.directory)}')
         return msg
 
