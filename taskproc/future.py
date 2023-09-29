@@ -1,7 +1,7 @@
 from __future__ import annotations
 from collections import UserDict, UserList
-from typing import Generic, Mapping, Protocol, Sequence, Any, runtime_checkable, TypeVar
-from typing_extensions import overload, Self
+from typing import Generic, Hashable, Mapping, Protocol, Sequence, Any, runtime_checkable, TypeVar
+from typing_extensions import overload
 from dataclasses import dataclass
 import json
 
@@ -9,7 +9,7 @@ from .types import JsonDict
 from .graph import TaskWorkerProtocol
 
 
-K = TypeVar('K', int, float, str, bool, None)
+K = TypeVar('K', bound=Hashable)
 T = TypeVar('T')
 R = TypeVar('R', covariant=True)
 P = TypeVar('P', contravariant=True)
