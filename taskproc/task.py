@@ -22,7 +22,7 @@ import sys
 import inspect
 
 
-from .types import JsonStr, TaskKey, JsonDict
+from .types import ErrorHandlingPolicy, JsonStr, TaskKey, JsonDict
 from .future import Future, FutureJSONEncoder, FutureMapperMixin
 from .database import Database
 from .graph import TaskGraph, TaskWorkerProtocol, run_task_graph
@@ -347,24 +347,30 @@ class Task(FutureMapperMixin, Generic[R]):
             self: PartiallyTypedTask[T], *,
             executor: Executor | None = None,
             rate_limits: dict[str, int] | None = None,
-            detect_source_change: bool = False,
+            prefixes: dict[str, str] | None = None,
+            error_handling: ErrorHandlingPolicy = 'eager',
             verbose_stats: bool = False,
             show_progress: bool = False,
-            prefixes: dict[str, str] | None = None,
+            detect_source_change: bool = False,
             ) -> tuple[T, dict[str, Any]]:
         self = cast(Task, self)
         graph = TaskGraph.build_from(self.task_worker, detect_source_change=detect_source_change)
 
         if executor is None:
             executor = ProcessPoolExecutor()
+        if rate_limits is None:
+            rate_limits = {}
+        if prefixes is None:
+            prefixes = {}
 
         stats = run_task_graph(
                 graph=graph,
                 executor=executor,
                 rate_limits=rate_limits,
-                dump_graphs=verbose_stats,
-                show_progress=show_progress,
                 prefixes=prefixes,
+                error_handling=error_handling,
+                verbose_stats=verbose_stats,
+                show_progress=show_progress,
                 )
         return self.task_worker.get_result(), stats
 
@@ -402,9 +408,10 @@ class DefaultCliArguments:
     loglevel: Literal['debug', 'info', 'warning', 'error'] = 'warning'
     num_workers: int | None = None
     kwargs: dict[str, Any] | None = None
-    prefix: dict[str, Any] | None = None
+    prefixes: dict[str, Any] | None = None
     rate_limits: dict[str, Any] | None = None
     exec_type: Literal['process', 'thread', 'local'] = 'process'
+    error_handling: ErrorHandlingPolicy = 'eager'
     _global: ClassVar[Self] | None = None
 
     def populate(self):
@@ -433,10 +440,11 @@ def _run_with_argparse(
     parser.add_argument('-l', '--loglevel', choices=['debug', 'info', 'warning', 'error'], default=defaults.loglevel, help=f'Defaults to {defaults.loglevel}.')
     parser.add_argument('-n', '--num-workers', type=int, default=None)
     parser.add_argument('--kwargs', type=json.loads, default=defaults.kwargs, help=f'Parameters of entrypoint in JSON dictionary of type: {param_types}. Defaults to {defaults.kwargs}.')
-    parser.add_argument('--prefix', type=json.loads, default=defaults.prefix, help=f'Prefix commands per channel in JSON dictionary. Defaults to {defaults.rate_limits}.')
+    parser.add_argument('--prefixes', type=json.loads, default=defaults.prefixes, help=f'Prefix commands per channel in JSON dictionary. Defaults to {defaults.prefixes}.')
     parser.add_argument('--rate-limits', type=json.loads, default=defaults.rate_limits, help=f'Rate limits per channel in JSON dictionary. Defaults to {defaults.rate_limits}.')
     parser.add_argument('-D', '--disable-detect-source-change', action='store_true', help='Disable automatic source change detection based on AST.')
     parser.add_argument('-t', '--exec-type', choices=['process', 'thread', 'local'], default=defaults.exec_type, help=f'Defaults to {defaults.exec_type}.')
+    parser.add_argument('-e', '--error-handling', choices=['eager', 'lazy'], default=defaults.error_handling, help=f'Defaults to {defaults.error_handling}.')
     parser.add_argument('--dont-force-entrypoint', action='store_true', help='Do nothing if the cache of the entripoint task is up-to-date.')       
     parser.add_argument('--dont-show-progress', action='store_true')                                                                                
     parser.parse_args(args=args, namespace=params)
@@ -453,9 +461,10 @@ def _run_with_argparse(
             _, stats = task_instance.run_graph(
                     executor=_get_executor(params.exec_type, max_workers=params.num_workers),
                     rate_limits=params.rate_limits,
-                    detect_source_change=not params.disable_detect_source_change,
+                    prefixes=params.prefixes,
+                    error_handling=params.error_handling,
                     show_progress=not params.dont_show_progress,
-                    prefixes=params.prefix,
+                    detect_source_change=not params.disable_detect_source_change,
                     )
         finally:
             # Fix broken tty after Popen with tricky command. Need some fix in the future.

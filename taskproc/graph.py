@@ -17,7 +17,7 @@ import networkx as nx
 
 from taskproc.executors import LocalExecutor
 
-from .types import JsonStr, TaskKey
+from .types import ErrorHandlingPolicy, JsonStr, TaskKey
 
 
 LOGGER = logging.getLogger(__name__)
@@ -134,22 +134,20 @@ class TaskGraph:
 def run_task_graph(
         graph: TaskGraph,
         executor: Executor,
-        rate_limits: dict[str, int] | None = None,
-        dump_graphs: bool = False,
-        show_progress: bool = False,
-        prefixes: dict[str, str] | None = None,
+        rate_limits: dict[str, int],
+        prefixes: dict[str, str],
+        error_handling: ErrorHandlingPolicy,
+        verbose_stats: bool,
+        show_progress: bool,
         ) -> dict[str, Any]:
     """ Consume task graph concurrently.
     """
-    # if force_interactive:
-    #     LOGGER.warning(f'Interactive mode is detected. Concurrent execution is disabled.')
-    #     executor = LocalExecutor()
     is_local = isinstance(executor, LocalExecutor)
     is_process_pool = isinstance(executor, ProcessPoolExecutor)
 
     if show_progress and is_local:
         show_progress = False
-        LOGGER.warning(f'Interactive task is detected while `show_progress` is set True. The progress bars is turned off.')
+        LOGGER.warning(f'LocalExecutor is detected while `show_progress` is set True. The progress bars is turned off.')
 
     stats = {k: len(args) for k, args in graph.get_nodes_by_task().items()}
     LOGGER.debug(f'Following tasks will be called: {stats}')
@@ -163,9 +161,7 @@ def run_task_graph(
     else:
         progressbars = {}
 
-    # Read concurrency budgets
-    if rate_limits is None:
-        rate_limits = {}
+    # Channel-wise concurrency tracker
     occupation: dict[str, set[Future[Any]]] = {k: set() for k in rate_limits}
 
     # Execute tasks
@@ -179,13 +175,17 @@ def run_task_graph(
         executor = stack.enter_context(executor)
 
         while standby or in_process:
+            # Short circuit for eager error handling
+            if error_handling == 'eager' and exceptions:
+                break
+
             # Log some stats
             LOGGER.debug(
                     f'nodes: {graph.size}, '
                     f'standby: {len(standby)}, '
                     f'in_process: {len(in_process)}'
                     )
-            if dump_graphs:
+            if verbose_stats:
                 info['remaining'].append(graph.get_nodes_by_task())
 
             # Submit all leaf tasks
@@ -221,7 +221,7 @@ def run_task_graph(
                     if chan in occupation:
                         occupation[chan].update(futures_to_submit)
 
-            if dump_graphs:
+            if verbose_stats:
                 def _summarize_tasks_in_process(taskkeys: list[TaskKey]):
                     out: dict[str, int] = defaultdict(lambda: 0)
                     for task_name, _ in taskkeys:
@@ -263,6 +263,7 @@ def run_task_graph(
 
     if exceptions:
         raise generate_task_group(exceptions)
+
     # Sanity check
     assert graph.size == 0, f'Graph is not empty. Should not happen.'
     assert all(len(occ) == 0 for occ in occupation.values()), 'Incorrect task count. Should not happen.'
@@ -318,9 +319,7 @@ class _TaskRunner:
         return self.channels, task.to_tuple()
 
 
-def _get_prefix_command(channels: TaskLabels, prefixes: dict[str, str] | None) -> str | None:
-    if prefixes is None:
-        return None
+def _get_prefix_command(channels: TaskLabels, prefixes: dict[str, str]) -> str | None:
     hit = [(chan, prefixes[chan]) for chan in channels if chan in prefixes]
     if not hit:
         return None
