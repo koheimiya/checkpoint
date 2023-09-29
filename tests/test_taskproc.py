@@ -20,7 +20,7 @@ class Choose(Task):
         return self.left.get_result() + self.right.get_result()
 
 
-@Graph('./.cache/tests')
+@Graph('./.cache/tests', clear_all=True)
 def test_graph():
     """ 15 caches:
      0123
@@ -32,7 +32,6 @@ def test_graph():
     5..xx
     6...x
     """
-    Choose.clear_all_tasks()
     ans, stats = Choose(6, 3).run_graph()
     assert ans == 20
     assert sum(stats['stats'].values()) == 15
@@ -81,11 +80,8 @@ class TaskC(Task):
         return f'{self.a.get_result()}, {self.b.get_result()}'
 
 
-@Graph('./.cache/tests')
+@Graph('./.cache/tests', clear_all=True)
 def test_multiple_tasks():
-    TaskA.clear_all_tasks()
-    TaskB.clear_all_tasks()
-    TaskC.clear_all_tasks()
     main = TaskC()
     assert main.run_graph(rate_limits={'<mychan>': 1})[0] == 'hello, world'
     assert TaskB().task_worker.labels == (TaskB.task_name, '<mychan>')
@@ -98,7 +94,7 @@ class TaskRaise(Task):
         raise ValueError(42)
 
 
-@Graph('./.cache/tests')
+@Graph('./.cache/tests', clear_all=True)
 def test_raise():
     with pytest.raises(ExceptionGroup):
         TaskRaise().run_graph()
@@ -124,10 +120,8 @@ class GreetWithFile(Task):
             return f.read()
 
 
-@Graph('./.cache/tests')
+@Graph('./.cache/tests', clear_all=True)
 def test_requires_directory():
-    CreateFile.clear_all_tasks()
-    GreetWithFile.clear_all_tasks()
     taskdir_world = CreateFile('Hello, world!').task_directory
     taskdir_me = CreateFile('Hello, me!').task_directory
 
@@ -178,7 +172,7 @@ class SummarizeParam(Task):
         return out
 
 
-@Graph('./.cache/tests')
+@Graph('./.cache/tests', clear_all=True)
 def test_json_param():
     res, _ = SummarizeParam(x=[1, 2], y=dict(zip(range(3), 'abc')), z=42).run_graph()
     assert res == {'x': 2, 'y': 3, 'z': None}
@@ -200,10 +194,8 @@ class DownstreamTask(Task):
         return self.up.get_result()
 
 
-@Graph('./.cache/tests')
+@Graph('./.cache/tests', clear_all=True)
 def test_mapping():
-    MultiResultTask.clear_all_tasks()
-    DownstreamTask.clear_all_tasks()
     assert DownstreamTask().run_graph()[0] == '42'
 
 
@@ -214,9 +206,8 @@ class PrefixedJob(Task):
         raise RuntimeError()
 
 
-@Graph('./.cache/tests')
+@Graph('./.cache/tests', clear_all=True)
 def test_prefix_command(capsys):
-    PrefixedJob.clear_all_tasks()
     task = PrefixedJob()
     with pytest.raises(ExceptionGroup):
         task.run_graph(executor=ThreadPoolExecutor(), prefixes={PrefixedJob.task_name: 'bash tests/run_with_hello.bash'})
@@ -228,9 +219,8 @@ def test_prefix_command(capsys):
     assert open(task.task_worker.cache.stdout_path, 'r').read() == 'world\n'
 
 
-@Graph('./.cache/tests')
+@Graph('./.cache/tests', clear_all=True)
 def test_prefix_command2(capsys):
-    PrefixedJob.clear_all_tasks()
     task = PrefixedJob()
     with pytest.raises(ExceptionGroup):
         task.run_graph(executor=ThreadPoolExecutor(), prefixes={'mychan': ''})
@@ -252,9 +242,8 @@ class SleepTask(Task):
         return t + max(self.prevs.get_result(), default=0)
 
 
-@Graph('./.cache/tests')
+@Graph('./.cache/tests', clear_all=True)
 def test_sleep_task():
-    SleepTask.clear_all_tasks()
     task1 = SleepTask()
     task2 = SleepTask()
     task3 = SleepTask()
@@ -272,9 +261,8 @@ class InteractiveJob(Task):
         return
 
 
-@Graph('./.cache/tests')
+@Graph('./.cache/tests', clear_all=True)
 def test_interactive(capsys):
-    InteractiveJob.clear_all_tasks()
     task = InteractiveJob()
     task.run_graph(executor=LocalExecutor())
     captured = capsys.readouterr()
@@ -300,3 +288,24 @@ def test_context():
 
     with Graph('./.cache/tests/1'):
         Choose.clear_all_tasks()
+
+
+class RateLimitedTask(Task):
+    def __init__(self, i: int) -> None:
+        ...
+    def run_task(self):
+        return 42
+
+
+class AggregatingTask(Task):
+    def __init__(self) -> None:
+        self.results = FutureList([RateLimitedTask(i) for i in range(10)])
+
+
+@Graph('./.cache/tests', clear_all=True)
+def test_rate_limits():
+    _, stats = AggregatingTask().run_graph(
+            rate_limits={RateLimitedTask.task_name: 1},
+            verbose_stats=True
+            )
+    assert all(ps.get(RateLimitedTask.task_name, 0) <= 1 for ps in stats['in_process'])

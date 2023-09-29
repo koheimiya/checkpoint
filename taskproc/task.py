@@ -45,10 +45,14 @@ class Graph(ContextDecorator, AbstractContextManager):
     CACHE_DIR: Path = Path.cwd() / '.cache'
     CONFIG_REGISTRY: dict[Type[Task[Any]], TaskConfig[Any]] = {}
 
-    def __init__(self, cache_dir: Path | str):
+    def __init__(self, cache_dir: Path | str, *, clear_all: bool = False):
         self.cache_dir = Path(cache_dir).resolve()
+        self.clear_all = clear_all
 
     def __enter__(self):
+        if self.clear_all and self.cache_dir.exists():
+            shutil.rmtree(self.cache_dir)
+
         cls = type(self)
         assert not cls._ENABLED
         cls._ENABLED = True
@@ -344,7 +348,7 @@ class Task(FutureMapperMixin, Generic[R]):
             executor: Executor | None = None,
             rate_limits: dict[str, int] | None = None,
             detect_source_change: bool = False,
-            dump_generations: bool = False,
+            verbose_stats: bool = False,
             show_progress: bool = False,
             prefixes: dict[str, str] | None = None,
             ) -> tuple[T, dict[str, Any]]:
@@ -358,7 +362,7 @@ class Task(FutureMapperMixin, Generic[R]):
                 graph=graph,
                 executor=executor,
                 rate_limits=rate_limits,
-                dump_graphs=dump_generations,
+                dump_graphs=verbose_stats,
                 show_progress=show_progress,
                 prefixes=prefixes,
                 )

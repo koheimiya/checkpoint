@@ -109,7 +109,7 @@ class TaskGraph:
         out = defaultdict(list)
         for x in nodes:
             out[self.get_task(x).labels].append(x)
-        return out
+        return dict(out)
 
     def pop_with_new_leaves(self, x: TaskKey, disallow_non_leaf: bool = True) -> dict[TaskLabels, list[TaskKey]]:
         if disallow_non_leaf:
@@ -153,7 +153,7 @@ def run_task_graph(
 
     stats = {k: len(args) for k, args in graph.get_nodes_by_task().items()}
     LOGGER.debug(f'Following tasks will be called: {stats}')
-    info = {'stats': stats, 'generations': []}
+    info = {'stats': stats, 'in_process': [], 'remaining': []}
 
     if show_progress:
         progressbars = {
@@ -166,7 +166,7 @@ def run_task_graph(
     # Read concurrency budgets
     if rate_limits is None:
         rate_limits = {}
-    occupied = {k: 0 for k in rate_limits}
+    occupation: dict[str, set[Future[Any]]] = {k: set() for k in rate_limits}
 
     # Execute tasks
     standby = graph.get_initial_tasks()
@@ -186,22 +186,22 @@ def run_task_graph(
                     f'in_process: {len(in_process)}'
                     )
             if dump_graphs:
-                info['generations'].append(graph.get_nodes_by_task())
+                info['remaining'].append(graph.get_nodes_by_task())
 
             # Submit all leaf tasks
             leftover: dict[TaskLabels, list[TaskKey]] = {}
             for channels, keys in standby.items():
+                # Select tasks to submit up to rate_limits
                 if any(chan in rate_limits for chan in channels):
-                    free = min(rate_limits[chan] - occupied[chan] for chan in channels if chan in rate_limits)
+                    free = min(rate_limits[chan] - len(occupation[chan]) for chan in channels if chan in rate_limits)
                     to_submit, to_hold = keys[:free], keys[free:]
-                    for chan in channels:
-                        if chan in occupied:
-                            occupied[chan] += len(to_submit)
                     if to_hold:
                         leftover[channels] = to_hold
                 else:
                     to_submit = keys
 
+                # Create futures
+                futures_to_submit: list[Future[Any]] = []
                 for key in to_submit:
                     if is_local:
                         LOGGER.info(f'Interactively executing {key}')
@@ -215,6 +215,19 @@ def run_task_graph(
                             )
                     future = executor.submit(runner)
                     in_process[future] = key
+                    futures_to_submit.append(future)
+
+                for chan in channels:
+                    if chan in occupation:
+                        occupation[chan].update(futures_to_submit)
+
+            if dump_graphs:
+                def _summarize_tasks_in_process(taskkeys: list[TaskKey]):
+                    out: dict[str, int] = defaultdict(lambda: 0)
+                    for task_name, _ in taskkeys:
+                        out[task_name] += 1
+                    return dict(out)
+                info['in_process'].append(_summarize_tasks_in_process(list(in_process.values())))
 
             # Wait for the first tasks to complete
             done, _ = wait(in_process.keys(), return_when=FIRST_COMPLETED)
@@ -222,8 +235,14 @@ def run_task_graph(
             # Update graph
             standby = defaultdict(list, leftover)
             for done_future in done:
+                # Update occupied
+                for chan, occ in occupation.items():
+                    if done_future in occ:
+                        occ.remove(done_future)
+
+                # Check if the task succeeded
                 try:
-                    queue_done, x_done = try_getting_result(
+                    _, x_done = try_getting_result(  # TODO: Consider removing the first return value
                             done_future,
                             task_key=in_process.pop(done_future),
                             graph=graph
@@ -234,12 +253,6 @@ def run_task_graph(
 
                 if show_progress:
                     progressbars[x_done[0]].update()
-
-                # Update occupied
-                for chan in queue_done:
-                    if chan in occupied:
-                        occupied[chan] -= 1
-                        assert occupied[chan] >= 0
 
                 # Remove node from graph
                 ys = graph.pop_with_new_leaves(x_done)
@@ -252,7 +265,7 @@ def run_task_graph(
         raise generate_task_group(exceptions)
     # Sanity check
     assert graph.size == 0, f'Graph is not empty. Should not happen.'
-    assert all(n == 0 for n in occupied.values()), 'Incorrect task count. Should not happen.'
+    assert all(len(occ) == 0 for occ in occupation.values()), 'Incorrect task count. Should not happen.'
     return info
 
 
