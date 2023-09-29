@@ -5,4 +5,4 @@ from typing_extensions import Literal, NewType
 JsonDict = NewType('JsonDict', dict)
 JsonStr = NewType('JsonStr', str)
 TaskKey = tuple[str, JsonStr]
-ErrorHandlingPolicy = Literal['eager', 'lazy']
+ErrorHandlingPolicy = Literal['immediate', 'eager', 'lazy']

@@ -229,7 +229,7 @@ def run_task_graph(
                     return dict(out)
                 info['in_process'].append(_summarize_tasks_in_process(list(in_process.values())))
 
-            # Wait for the first tasks to complete
+            # Wait for any tasks to complete
             done, _ = wait(in_process.keys(), return_when=FIRST_COMPLETED)
 
             # Update graph
@@ -249,7 +249,10 @@ def run_task_graph(
                             )
                 except FailedTaskError as e:
                     exceptions.append(e)
-                    continue
+                    if error_handling == 'immediate':
+                        break
+                    else:
+                        continue
 
                 if show_progress:
                     progressbars[x_done[0]].update()
