@@ -1,4 +1,4 @@
-from taskproc import Task, CLIDefaultArguments
+from taskproc import Task, DefaultCliArguments
 
 
 class Main(Task):
@@ -8,7 +8,7 @@ class Main(Task):
         print('Hi there')
 
 
-CLIDefaultArguments(
+DefaultCliArguments(
         prefix={
             'gpu': 'jbsub -tty -queue x86_1h -cores 4+1 -mem 8g'
             }

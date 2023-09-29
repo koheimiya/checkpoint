@@ -79,7 +79,7 @@ ans, stats = task.run_graph()  # `ans` should be 6 chooses 3, which is 20. `stat
 For example, if you have
 ```python
 # taskfile.py
-from taskproc import Task, CLIDefaultArguments
+from taskproc import Task, DefaultCliArguments
 # ...
 
 class Main(Task):
@@ -90,7 +90,7 @@ class Main(Task):
         print(self.result.get_result())
 
 # Optionally you can configure default CLI arguments.
-CLIDefaultArguments(
+DefaultCliArguments(
     # ...
 ).populate()
 ```
@@ -311,6 +311,7 @@ tree -l -P *.txt --prune /<path_to_cache_directory>/<task_name>/results/<root_ta
     - Current task argument serialization is not ideal since JSON is mapping two different values into the same text representation (e.g., tuple and list). Consider using consistency check `x == json.loads(json.dumps(x))`, or redesign the format.
 
 - Feature enhancement
+    - Error handling policy (eager/lazy) as an argument.
     - Task-state tracker.
     - Simple task graph visualizer.
     - Pydantic/dataclass support in task arguments (as an incompatible, but better-UX object with TypedDict).

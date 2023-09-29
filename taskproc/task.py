@@ -369,9 +369,9 @@ class Task(FutureMapperMixin, Generic[R]):
         return self.task_worker.get_result(), stats
 
     @classmethod
-    def cli(cls, args: Sequence[str] | None = None, defaults: CLIDefaultArguments | None = None) -> None:
+    def cli(cls, args: Sequence[str] | None = None, defaults: DefaultCliArguments | None = None) -> None:
         if defaults is None:
-            defaults = CLIDefaultArguments.get_default()
+            defaults = DefaultCliArguments.get_global()
         _run_with_argparse(cls, args=args, defaults=defaults)
 
     @classmethod
@@ -398,7 +398,7 @@ def _serialize_arguments(fn: Callable[P, Any], *args: P.args, **kwargs: P.kwargs
 
 
 @dataclass(frozen=True)
-class CLIDefaultArguments:
+class DefaultCliArguments:
     loglevel: Literal['debug', 'info', 'warning', 'error'] = 'warning'
     num_workers: int | None = None
     kwargs: dict[str, Any] | None = None
@@ -411,14 +411,14 @@ class CLIDefaultArguments:
         type(self)._global = self
 
     @classmethod
-    def get_default(cls):
-        return CLIDefaultArguments() if cls._global is None else cls._global
+    def get_global(cls):
+        return DefaultCliArguments() if cls._global is None else cls._global
 
 
 def _run_with_argparse(
         task_class: Type[Task[Any]],
         args: Sequence[str] | None,
-        defaults: CLIDefaultArguments,
+        defaults: DefaultCliArguments,
         ) -> None:
     if defaults is None:
         params = argparse.Namespace()
