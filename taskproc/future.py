@@ -1,6 +1,7 @@
 from __future__ import annotations
+from abc import ABC, abstractmethod
 from collections import UserDict, UserList
-from typing import Generic, Hashable, Mapping, Protocol, Sequence, Any, runtime_checkable, TypeVar
+from typing import Generic, Hashable, Mapping, Sequence, Any, TypeVar
 from typing_extensions import overload
 from dataclasses import dataclass
 import json
@@ -15,16 +16,26 @@ R = TypeVar('R', covariant=True)
 P = TypeVar('P', contravariant=True)
 
 
-@runtime_checkable
-class Future(Protocol[R]):
+class Future(Generic[R], ABC):
+    @abstractmethod
     def get_result(self) -> R:
         ...
 
+    @abstractmethod
     def to_json(self) -> JsonDict:
         ...
 
+    @abstractmethod
     def get_workers(self, prefix: str) -> dict[str, TaskWorkerProtocol]:
         ...
+
+    @overload
+    def __getitem__(self: Future[Sequence[T]], key: int) -> MappedFuture[T]: ...
+    @overload
+    def __getitem__(self: Future[Mapping[K, T]], key: K) -> MappedFuture[T]: ...
+    def __getitem__(self: Future[Mapping[K, T] | Sequence[T]], key: int | K) -> MappedFuture[T]:
+        assert _check_if_literal(key), f"Non-literal key for Future: {key=}"
+        return MappedFuture(self, key)
 
 
 class FutureJSONEncoder(json.JSONEncoder):
@@ -35,18 +46,18 @@ class FutureJSONEncoder(json.JSONEncoder):
             return super().default(o)
 
 
-class FutureMapperMixin:
-    @overload
-    def __getitem__(self: Future[Sequence[T]], key: int) -> MappedFuture[T]: ...
-    @overload
-    def __getitem__(self: Future[Mapping[K, T]], key: K) -> MappedFuture[T]: ...
-    def __getitem__(self: Future[Mapping[K, T] | Sequence[T]], key: int | K) -> MappedFuture[T]:
-        assert _check_if_literal(key), f"Non-literal key for Future: {key=}"
-        return MappedFuture(self, key)
+# class FutureMapperMixin:
+#     @overload
+#     def __getitem__(self: Future[Sequence[T]], key: int) -> MappedFuture[T]: ...
+#     @overload
+#     def __getitem__(self: Future[Mapping[K, T]], key: K) -> MappedFuture[T]: ...
+#     def __getitem__(self: Future[Mapping[K, T] | Sequence[T]], key: int | K) -> MappedFuture[T]:
+#         assert _check_if_literal(key), f"Non-literal key for Future: {key=}"
+#         return MappedFuture(self, key)
 
 
 @dataclass
-class MappedFuture(FutureMapperMixin, Generic[R]):
+class MappedFuture(Future[R]):
     task: Future[Mapping[Any, R] | Sequence[R]]
     key: Any
 
@@ -84,7 +95,7 @@ class MappedFuture(FutureMapperMixin, Generic[R]):
 
 
 @dataclass(frozen=True)
-class Const(FutureMapperMixin, Generic[R]):
+class Const(Future[R]):
     value: R
 
     def __post_init__(self):
@@ -108,7 +119,7 @@ def _check_if_literal(x: Any) -> bool:
     return x == xx
 
 
-class FutureDict(UserDict[K, Future[T]]):
+class FutureDict(UserDict[K, Future[T]], Future[Mapping[K, T]]):
     def get_result(self) -> dict[K, T]:
         return {k: v.get_result() for k, v in self.items()}
 
@@ -120,7 +131,7 @@ class FutureDict(UserDict[K, Future[T]]):
         return {kk: vv for k, v in self.items() for kk, vv in v.get_workers(prefix=f'{prefix}.{k}').items()}
 
 
-class FutureList(UserList[Future[T]]):
+class FutureList(UserList[Future[T]], Future[Sequence[T]]):
     def get_result(self) -> list[T]:
         return [v.get_result() for v in self]
 

@@ -23,7 +23,7 @@ import inspect
 
 
 from .types import ErrorHandlingPolicy, JsonStr, TaskKey, JsonDict
-from .future import Future, FutureJSONEncoder, FutureMapperMixin
+from .future import Future, FutureJSONEncoder
 from .database import Database
 from .graph import TaskGraph, TaskWorkerProtocol, run_task_graph
 from .executors import LocalExecutor
@@ -290,7 +290,7 @@ def wrap_task_init(init_method: Callable[Concatenate[Task[R], P], None]) -> Call
     return wrapped_init
 
 
-class Task(FutureMapperMixin, Generic[R]):
+class Task(Future[R]):
     __init_orig__: Any
     task_config: TaskConfig[R]
     task_worker: TaskWorker[R]
