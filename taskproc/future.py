@@ -2,7 +2,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections import UserDict, UserList
 from typing import Generic, Hashable, Mapping, Sequence, Any, TypeVar
-from typing_extensions import overload
+from typing_extensions import Protocol, overload
 from dataclasses import dataclass
 import json
 
@@ -14,6 +14,17 @@ K = TypeVar('K', bound=Hashable)
 T = TypeVar('T')
 R = TypeVar('R', covariant=True)
 P = TypeVar('P', contravariant=True)
+
+
+class FutureProtocol(Protocol[R]):
+    def get_result(self) -> R:
+        ...
+
+    def to_json(self) -> JsonDict:
+        ...
+
+    def get_workers(self, prefix: str) -> dict[str, TaskWorkerProtocol]:
+        ...
 
 
 class Future(Generic[R], ABC):
@@ -120,6 +131,9 @@ def _check_if_literal(x: Any) -> bool:
 
 
 class FutureDict(UserDict[K, Future[T]], Future[Mapping[K, T]]):
+    def __init__(self, __dict: Mapping[K, FutureProtocol[T]]):
+        super().__init__(__dict)  # type: ignore
+
     def get_result(self) -> dict[K, T]:
         return {k: v.get_result() for k, v in self.items()}
 
@@ -132,6 +146,9 @@ class FutureDict(UserDict[K, Future[T]], Future[Mapping[K, T]]):
 
 
 class FutureList(UserList[Future[T]], Future[Sequence[T]]):
+    def __init__(self, __list: Sequence[FutureProtocol[T]]):
+        super().__init__(__list)  # type: ignore
+
     def get_result(self) -> list[T]:
         return [v.get_result() for v in self]
 
