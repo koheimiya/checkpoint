@@ -311,9 +311,11 @@ tree -l -P *.txt --prune /<path_to_cache_directory>/<task_name>/results/<root_ta
     - Current task argument serialization is not ideal since JSON is mapping two different values into the same text representation (e.g., tuple and list). Consider using consistency check `x == json.loads(json.dumps(x))`, or redesign the format.
 
 - Feature enhancement
+    - Use class decorator to make task (to do so, resolve the issue of pickling decorated class).
     - Task-state tracker as script.
     - Simple task graph visualizer.
-    - Ergonomic typed dict support (recursively dict-serializable dataclass) for data-centric task building.
+    - from `task_label` to `task_labels`, abandoning bare str.
+    - Dataclass compatibility (delay overwriting `__init__`)
 
 - Feature enhancement (stale)
     - Pydantic/dataclass support in task arguments (as an incompatible, but better-UX object with TypedDict).

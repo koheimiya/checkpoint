@@ -41,6 +41,7 @@ R = TypeVar('R', covariant=True)
 
 
 class Graph(ContextDecorator, AbstractContextManager):
+    """ Storing tasks and their inter-dependencies. """
     _ENABLED: bool = False
     CACHE_DIR: Path = Path.cwd() / '.cache'
     CONFIG_REGISTRY: dict[Type[Task[Any]], TaskConfig[Any]] = {}
@@ -69,7 +70,7 @@ class Graph(ContextDecorator, AbstractContextManager):
 
 
 class TaskConfig(Generic[R]):
-    """ Information specific to a task class of a graph (not instance) """
+    """ Storing information specific to a task class of a graph (not instance) """
     def __init__(
             self,
             task_class: Type[Task[R]],
@@ -95,6 +96,7 @@ class TaskConfig(Generic[R]):
 
 
 class TaskWorker(Generic[R]):
+    """ Storing information to run task """
     def __init__(self, config: TaskConfig[R], instance: Task[R], arg_key: JsonStr) -> None:
         self.config = config
         self.instance = instance

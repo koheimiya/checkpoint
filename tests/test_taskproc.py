@@ -1,5 +1,7 @@
+from abc import abstractclassmethod, abstractmethod
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any
+from dataclasses import dataclass
+from typing import Any, Callable, ClassVar, Generic, Self, Type, TypeVar
 import pytest
 from taskproc import Task, Future, Const, Graph, FutureList, FutureDict
 import time
